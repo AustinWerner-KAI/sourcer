@@ -39,12 +39,21 @@ Database tests run when `TEST_DATABASE_URL` points at an empty Postgres database
 
 ## Deploy
 
+Runs on one machine with Docker (the office Mac). Needs Docker Desktop running.
+
 ```bash
-cp .env.example deploy/.env   # fill in values
-cd deploy && docker compose up -d --build
+cp .env.example deploy/.env   # fill in values; POSTGRES_PASSWORD must be long and random
+bash deploy/setup-mac.sh      # first time: start, first backup, daily 02:00 backup
+bash deploy/start.sh          # after an update: rebuild and restart
 ```
 
 The server listens on `127.0.0.1:8080` only. Expose it through the VPN or a reverse proxy, never directly.
+
+**Backups** go to `~/sourcer-backups` (outside the code, since they hold candidate data). Each one is checked after it is written, and 30 days are kept. The log is `~/sourcer-backups/backup.log`.
+
+- Back up now: `bash deploy/backup.sh`
+- Restore: `bash deploy/restore.sh ~/sourcer-backups/<file>.dump` (takes a backup of the current data first)
+- Copy the backups folder off the machine regularly (for example to OneDrive). A backup on the same disk does not survive the disk failing.
 
 ## Rules for contributors
 
