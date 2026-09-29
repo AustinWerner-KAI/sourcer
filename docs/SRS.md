@@ -100,14 +100,14 @@ Safety comes first: no message leaves without approval, and no person is contact
 
 ## Open decisions
 
-Ten decisions need Kai's answer. The first four block Sprint 1; the rest block later milestones.
+D1 to D4 are decided (29 Sep), so Sprint 1 can start. Six decisions remain; they block later milestones.
 
 | # | Decision | Blocks | Status |
 | --- | --- | --- | --- |
-| D1 | Microsoft 365 admin consent for sign-in and sending mail | Sprint 1 (F1) | Open |
-| D2 | Hosting: office server, or a private cloud box behind the VPN | Sprint 1 (deploy) | Open |
-| D3 | PDL paid plan, and a monthly credit budget | Sprint 1 (F5) | Open |
-| D4 | Confirm the proposed targets: N1, N2, N13 and N15 | Sprint 1 | Open |
+| D1 | Microsoft 365 admin consent for sign-in and sending mail. **Yes:** Kai registers the app | Sprint 1 (F1) | Decided |
+| D2 | Hosting. **Office machine**, reached over the office network or VPN | Sprint 1 (deploy) | Decided |
+| D3 | PDL plan. **Paid plan bought once the build is complete;** build and test on the free tier with saved sample data | Sprint 1 (F5) | Decided |
+| D4 | Proposed targets N1, N2, N13 and N15. **Confirmed** | Sprint 1 | Decided |
 | D5 | Team: who uses it at launch, and who is admin | M1 | Open |
 | D6 | Client off-limits list | M1 (F8) | Open |
 | D7 | Apollo API key | M2 (F11) | Open |
@@ -133,11 +133,11 @@ Each milestone ends at its gate. The next one starts only once that test passes 
 Goal: a signed-in resourcer runs a PDL search from the app and sees the results, with every step in the audit log.
 
 - [ ] Microsoft 365 sign-in with admin and resourcer roles (F1, needs D1)
-- [ ] PDL connection: count, search, cost shown first, no double charge (F5, N11, N14, needs D3)
+- [ ] PDL connection: count, search, cost shown first, no double charge; tested on saved sample data, one live check on the free tier (F5, N11, N14)
 - [ ] Apollo connection behind the same interface, switched on when the key arrives (F11, D7)
 - [ ] Background job queue with safe retries (N14)
 - [ ] Audit log on every change and send (N6)
-- [ ] Deploy to the chosen host with daily backups (N5, N15, needs D2)
+- [ ] Deploy to the office machine with daily backups (N5, N15)
 - [ ] CI green; self-review before merge (N16)
 
 ## Sign-off and change log
@@ -145,10 +145,11 @@ Goal: a signed-in resourcer runs a PDL search from the app and sees the results,
 This SRS is the source of truth. Any change to scope or requirements is recorded here before it is built.
 
 - [ ] Kai approves the requirements, scope and project plan
-- [ ] D1 to D4 answered, so Sprint 1 can start
+- [x] D1 to D4 answered, so Sprint 1 can start
 
 | Date | Change |
 | --- | --- |
+| 29 Sep 2026 | D1 to D4 decided: Microsoft 365 consent yes, office machine hosting, PDL paid plan after the build, targets confirmed |
 | 29 Sep 2026 | First version, drawn from the Product and Solution Design doc and the decisions log |
 
 Sources: [Product and Solution Design](https://claude.ai/code/artifact/a3f61e00-2e2c-457a-b135-7b3387bc7179) · [Workspace UI design](https://claude.ai/artifact/TnSaPrFXBCeqxP7ErBmrTr)
