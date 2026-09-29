@@ -1,7 +1,9 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api/client";
 import { Screen } from "./screens/Screen";
+import { SignIn } from "./screens/SignIn";
+import { Team } from "./screens/Team";
 
 const screens = [
   { path: "/today", label: "Today", note: "Replies waiting, follow-ups due and new matches for live roles." },
@@ -13,7 +15,23 @@ const screens = [
 ];
 
 export function App() {
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30_000 });
+  const queryClient = useQueryClient();
+
+  if (me.isLoading) return <div className="loading" aria-busy="true" />;
+  if (!me.data) return <SignIn />;
+  const isAdmin = me.data.role === "admin";
+
+  // Only show the signed-out screen once the server has ended the session.
+  const signOut = async () => {
+    try {
+      await api.logout();
+      queryClient.setQueryData(["me"], null);
+    } catch {
+      window.alert("Sign-out did not complete. Please try again.");
+    }
+  };
 
   return (
     <div className="shell">
@@ -28,6 +46,14 @@ export function App() {
               {s.label}
             </NavLink>
           ))}
+          {isAdmin && <NavLink to="/team">Team</NavLink>}
+        </div>
+        <div className="user">
+          <div className="user-name">{me.data.name}</div>
+          <div className="user-role">{isAdmin ? "Admin" : "Resourcer"}</div>
+          <button className="link-button" onClick={signOut}>
+            Sign out
+          </button>
         </div>
         <div className="status" role="status">
           Server
@@ -47,6 +73,7 @@ export function App() {
         {screens.map((s) => (
           <Route key={s.path} path={s.path} element={<Screen title={s.label} note={s.note} />} />
         ))}
+        <Route path="/team" element={isAdmin ? <Team me={me.data} /> : <Navigate to="/today" replace />} />
       </Routes>
     </div>
   );

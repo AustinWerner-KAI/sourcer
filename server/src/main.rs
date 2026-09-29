@@ -23,13 +23,21 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "sourcer server listening");
 
+    let auth = config.auth();
+    if auth.is_none() {
+        tracing::warn!("Microsoft 365 sign-in is not configured; set M365_TENANT_ID, M365_CLIENT_ID and M365_CLIENT_SECRET");
+    }
     let router = app::router_with_web(
-        app::AppState { pool: Some(pool) },
+        app::AppState::new(Some(pool), auth),
         config.web_dir.as_deref(),
     );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    // Connection info lets the sign-in limit count attempts per address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown())
+    .await?;
 
     let _ = stop.send(true);
     worker.await?;

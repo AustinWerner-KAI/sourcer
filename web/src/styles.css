@@ -28,7 +28,7 @@ button { font-family: inherit; cursor: pointer; }
 .nav-links { display: flex; flex-direction: column; gap: 4px; }
 .nav-links a { padding: 12px 14px; border-radius: 8px; color: #d6d6d6; font-size: 15px; }
 .nav-links a.active { background: var(--gold-soft); color: var(--gold); font-weight: 600; }
-.status { margin-top: auto; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; color: var(--muted); }
+.status { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; color: var(--muted); }
 .status strong { display: block; font-size: 14px; color: var(--text); margin-top: 4px; }
 
 main { flex: 1; padding: 36px 48px; display: flex; flex-direction: column; gap: 24px; }
@@ -36,3 +36,40 @@ main { flex: 1; padding: 36px 48px; display: flex; flex-direction: column; gap: 
 h1 { margin: 8px 0 0; font-family: var(--display); font-size: 30px; font-weight: 600; }
 .panel { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 .panel p { margin: 0; color: var(--text-2); line-height: 1.5; }
+
+.user { margin-top: auto; padding: 14px; border-top: 1px solid var(--line); }
+.user-name { font-size: 14px; font-weight: 600; }
+.user-role { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.link-button { margin-top: 10px; padding: 0; background: none; border: 0; color: var(--gold); font-size: 13px; }
+
+.loading { min-height: 100vh; background: var(--bg); }
+.signin { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.signin-card { width: 100%; max-width: 400px; padding: 40px 36px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.signin-card h1 { margin: 20px 0 8px; font-size: 34px; }
+.signin-lead { margin: 0 0 28px; color: var(--text-2); line-height: 1.5; }
+.signin-error { margin: 0 0 20px; padding: 12px 14px; border-radius: var(--radius); background: rgba(255, 155, 115, 0.1); color: var(--warn); font-size: 14px; line-height: 1.45; }
+.btn-primary { display: block; padding: 14px 18px; border-radius: var(--radius); background: var(--gold); color: #000; font-weight: 600; text-align: center; }
+.btn-primary:hover { filter: brightness(1.06); }
+.signin-note { margin: 14px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+
+.panel-title { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.panel .panel-note { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.invite { display: grid; grid-template-columns: 1fr 1.4fr 160px auto; gap: 12px; align-items: end; }
+.invite label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.invite input, .invite select { padding: 11px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: inherit; font-size: 15px; }
+.invite .btn-primary { border: 0; font-size: 15px; }
+.invite .btn-primary:disabled { opacity: 0.6; cursor: default; }
+.panel .form-error { margin: 14px 0 0; color: var(--warn); font-size: 14px; }
+.team { width: 100%; border-collapse: collapse; font-size: 14px; }
+.team th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; padding: 0 12px 10px 0; border-bottom: 1px solid var(--line); }
+.team td { padding: 14px 12px 14px 0; border-bottom: 1px solid var(--line); color: var(--text-2); }
+.team td:first-child { color: var(--text); font-weight: 500; }
+.team tr.is-off td { color: var(--muted); }
+.team .actions { text-align: right; }
+.team .actions .link-button { margin: 0; }
+.you { margin-left: 8px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill-active { background: var(--gold-soft); color: var(--gold); }
+.pill-invited { background: rgba(255, 255, 255, 0.06); color: var(--text-2); }
+.pill-disabled { background: rgba(255, 155, 115, 0.1); color: var(--warn); }
+@media (max-width: 900px) { .invite { grid-template-columns: 1fr; } }
