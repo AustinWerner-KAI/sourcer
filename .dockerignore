@@ -1,0 +1,10 @@
+# Keep the build context small and free of secrets and local data.
+**/target
+**/node_modules
+web/dist
+**/*.tsbuildinfo
+.git
+.env
+deploy/.env
+**/*.dump
+**/.DS_Store
