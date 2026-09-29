@@ -372,6 +372,14 @@ async fn resolve_user(
             return Ok(Access::OtherAccount);
         }
         if disabled {
+            audit::record(
+                pool,
+                org_id,
+                None,
+                audit::action::SIGN_IN_REFUSED,
+                &format!("user:{user_id} switched-off"),
+            )
+            .await?;
             return Ok(Access::Disabled);
         }
         // First sign-in links the Microsoft account; later ones refresh the name.
