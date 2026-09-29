@@ -21,9 +21,14 @@ export function App() {
   if (me.isLoading) return <div className="loading" aria-busy="true" />;
   if (!me.data) return <SignIn />;
 
+  // Only show the signed-out screen once the server has ended the session.
   const signOut = async () => {
-    await api.logout();
-    queryClient.setQueryData(["me"], null);
+    try {
+      await api.logout();
+      queryClient.setQueryData(["me"], null);
+    } catch {
+      window.alert("Sign-out did not complete. Please try again.");
+    }
   };
 
   return (
