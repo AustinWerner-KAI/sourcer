@@ -49,7 +49,7 @@ fn secret(name: &str) -> Option<String> {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        Ok(Self {
+        let config = Self {
             database_url: std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?,
             bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
             web_dir: std::env::var("WEB_DIR").ok(),
@@ -61,7 +61,28 @@ impl Config {
             public_url: std::env::var("PUBLIC_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
             admin_email: secret("ADMIN_EMAIL"),
-        })
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Refuse settings that would weaken sign-in. The tenant must be the Austin
+    /// Werner directory id: "common" or "organizations" would let any
+    /// Microsoft account in.
+    pub fn validate(&self) -> Result<()> {
+        /// Microsoft's shared tenant for personal accounts.
+        const CONSUMERS: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
+        if let Some(t) = &self.m365_tenant_id {
+            let plain = uuid::Uuid::parse_str(t)
+                .map(|u| u.hyphenated().to_string() == *t)
+                .unwrap_or(false);
+            if !plain || t == CONSUMERS {
+                anyhow::bail!(
+                    "M365_TENANT_ID must be your directory (tenant) ID: a lower-case GUID such as e7dd990b-9a86-456e-8822-dc9473519ce4"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Sign-in settings, or `None` if the app registration is incomplete.
@@ -88,7 +109,7 @@ mod tests {
             web_dir: None,
             pdl_api_key: Some("pdl-secret".into()),
             apollo_api_key: None,
-            m365_tenant_id: Some("t".into()),
+            m365_tenant_id: Some("e7dd990b-9a86-456e-8822-dc9473519ce4".into()),
             m365_client_id: Some("c".into()),
             m365_client_secret: Some("ms-secret".into()),
             public_url: "http://localhost:8080".into(),
@@ -106,5 +127,42 @@ mod tests {
             incomplete.auth().is_none(),
             "sign-in stays off until all three are set"
         );
+    }
+
+    #[test]
+    fn tenant_must_be_a_directory_id() {
+        let base = Config {
+            database_url: "x".into(),
+            bind_addr: "x".into(),
+            web_dir: None,
+            pdl_api_key: None,
+            apollo_api_key: None,
+            m365_tenant_id: None,
+            m365_client_id: None,
+            m365_client_secret: None,
+            public_url: "http://localhost:8080".into(),
+            admin_email: None,
+        };
+        assert!(base.validate().is_ok());
+        for bad in [
+            "common",
+            "organizations",
+            "consumers",
+            "austinwerner.io",
+            "9188040d-6c67-4c5b-b112-36a304b66dad",
+            "{e7dd990b-9a86-456e-8822-dc9473519ce4}",
+            "urn:uuid:e7dd990b-9a86-456e-8822-dc9473519ce4",
+        ] {
+            let c = Config {
+                m365_tenant_id: Some(bad.into()),
+                ..base.clone()
+            };
+            assert!(c.validate().is_err(), "{bad} must be refused");
+        }
+        let good = Config {
+            m365_tenant_id: Some("e7dd990b-9a86-456e-8822-dc9473519ce4".into()),
+            ..base
+        };
+        assert!(good.validate().is_ok());
     }
 }
