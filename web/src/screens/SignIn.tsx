@@ -5,6 +5,9 @@ const reasons: Record<string, string> = {
   cancelled: "Sign-in was cancelled.",
   microsoft: "Microsoft could not complete the sign-in. Please try again.",
   invalid: "Something went wrong with the sign-in. Please try again.",
+  browser: "Please start sign-in again from this browser.",
+  disabled: "This account has been switched off. Ask an admin if you need access.",
+  mismatch: "This email is linked to a different Microsoft account. Ask an admin to check it.",
 };
 
 export function SignIn() {
