@@ -17,6 +17,9 @@ pub struct PersonRecord {
     pub full_name: String,
     pub current_title: Option<String>,
     pub current_employer: Option<String>,
+    /// The current employer's web domain, when the provider gives it.
+    #[serde(default)]
+    pub current_employer_domain: Option<String>,
     pub location: Option<String>,
     pub linkedin_url: Option<String>,
     pub experience: Vec<ExperienceRecord>,
@@ -25,6 +28,8 @@ pub struct PersonRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExperienceRecord {
     pub employer: String,
+    #[serde(default)]
+    pub employer_domain: Option<String>,
     pub title: Option<String>,
     /// As the provider gives it: "2021-03", "2021" or a full date.
     pub start: Option<String>,
