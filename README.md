@@ -3,7 +3,8 @@
 Resourcing and outreach for Austin Werner. A job spec goes in; a ranked list, team-memory checks, contact details and personal outreach drafts come out. Interested candidates are handed to the ATS.
 
 - Product and solution design: see `docs/README.md`
-- Status: **M0 Foundations** (scaffold)
+- Requirements: `docs/SRS.md`
+- Status: **Sprint 1** (M0 Foundations)
 
 ## Layout
 
@@ -31,6 +32,8 @@ cd ../web
 npm install
 npm run dev   # http://localhost:5173
 ```
+
+Database tests run when `TEST_DATABASE_URL` points at an empty Postgres database (for example `createdb sourcer_test`, then `TEST_DATABASE_URL=postgres://localhost/sourcer_test cargo test`). Without it they are skipped.
 
 `cargo test` also regenerates the shared TypeScript types in `web/src/api/types/`. Commit them with your change; CI fails if they drift.
 

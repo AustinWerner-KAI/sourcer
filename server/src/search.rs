@@ -1,0 +1,506 @@
+//! Run a people search for a role and save the results (SRS F5, N11, N14).
+//!
+//! - Refuses when the organisation has paused paid calls.
+//! - The same idempotency key never runs or charges twice.
+//! - People are merged by provider id or LinkedIn URL, so a person found twice
+//!   is one record, with one candidacy per role.
+
+use anyhow::{bail, Context, Result};
+use sqlx::{PgPool, Postgres, Transaction};
+use uuid::Uuid;
+
+use crate::{
+    audit,
+    policy::normalise_identifier,
+    sources::{PeopleSource, PersonRecord, SearchQuery},
+};
+
+#[derive(Debug, Clone)]
+pub struct SearchRequest {
+    pub org_id: Uuid,
+    pub actor_id: Option<Uuid>,
+    pub role_id: Uuid,
+    pub brief_id: Uuid,
+    pub query: SearchQuery,
+    /// Same key = same search. A retried click or job reuses it.
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchOutcome {
+    Ran {
+        run_id: Uuid,
+        total: u64,
+        pulled: usize,
+        credits: u32,
+        new_candidates: usize,
+    },
+    AlreadyRan {
+        run_id: Uuid,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PaidCallsPaused;
+
+impl std::fmt::Display for PaidCallsPaused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("paid calls are paused for this organisation")
+    }
+}
+
+impl std::error::Error for PaidCallsPaused {}
+
+pub async fn run_search<S: PeopleSource>(
+    pool: &PgPool,
+    source: &S,
+    req: &SearchRequest,
+) -> Result<SearchOutcome> {
+    let paused: bool = sqlx::query_scalar("SELECT paid_calls_paused FROM org WHERE id = $1")
+        .bind(req.org_id)
+        .fetch_one(pool)
+        .await
+        .context("organisation not found")?;
+    if paused {
+        bail!(PaidCallsPaused);
+    }
+
+    let Some(run_id) = reserve_run(pool, req).await? else {
+        let run_id =
+            sqlx::query_scalar("SELECT id FROM run WHERE org_id = $1 AND idempotency_key = $2")
+                .bind(req.org_id)
+                .bind(&req.idempotency_key)
+                .fetch_one(pool)
+                .await?;
+        return Ok(SearchOutcome::AlreadyRan { run_id });
+    };
+
+    let page = match source.search(&req.query).await {
+        Ok(page) => page,
+        Err(e) => {
+            // Nothing was saved, so free the key and let a retry run.
+            sqlx::query("DELETE FROM run WHERE id = $1")
+                .bind(run_id)
+                .execute(pool)
+                .await?;
+            return Err(e).context(format!("{} search failed", source.name()));
+        }
+    };
+
+    let mut tx = pool.begin().await?;
+    let mut new_candidates = 0;
+    for record in &page.records {
+        let person_id = upsert_person(&mut tx, req.org_id, record).await?;
+        let inserted = sqlx::query(
+            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (person_id, role_id) DO NOTHING",
+        )
+        .bind(req.org_id)
+        .bind(person_id)
+        .bind(req.role_id)
+        .bind(req.brief_id)
+        .execute(&mut *tx)
+        .await?;
+        new_candidates += inserted.rows_affected() as usize;
+    }
+    sqlx::query("UPDATE run SET records_pulled = $2, credits_used = $3 WHERE id = $1")
+        .bind(run_id)
+        .bind(page.records.len() as i32)
+        .bind(page.credits_used as i32)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut *tx,
+        req.org_id,
+        req.actor_id,
+        audit::action::SEARCH_RUN,
+        &format!("run:{run_id}"),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(SearchOutcome::Ran {
+        run_id,
+        total: page.total,
+        pulled: page.records.len(),
+        credits: page.credits_used,
+        new_candidates,
+    })
+}
+
+/// Insert the run row, or `None` if this idempotency key has already run.
+async fn reserve_run(pool: &PgPool, req: &SearchRequest) -> Result<Option<Uuid>> {
+    let id = sqlx::query_scalar(
+        "INSERT INTO run (org_id, role_id, brief_id, queries, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, idempotency_key) DO NOTHING
+         RETURNING id",
+    )
+    .bind(req.org_id)
+    .bind(req.role_id)
+    .bind(req.brief_id)
+    .bind(serde_json::to_value(&req.query)?)
+    .bind(&req.idempotency_key)
+    .fetch_optional(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Find the person by provider id or LinkedIn URL, refresh them, or add them.
+/// Work history is replaced with the latest the provider holds.
+async fn upsert_person(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: Uuid,
+    r: &PersonRecord,
+) -> Result<Uuid> {
+    let linkedin = r.linkedin_url.as_deref().map(normalise_identifier);
+    let existing: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM person
+         WHERE org_id = $1 AND (pdl_id = $2 OR linkedin_url = $3)
+         ORDER BY (pdl_id = $2) DESC NULLS LAST
+         LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(&r.source_id)
+    .bind(&linkedin)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let person_id = match existing {
+        Some(id) => {
+            sqlx::query(
+                "UPDATE person SET
+                   pdl_id = COALESCE(pdl_id, $2),
+                   linkedin_url = COALESCE(linkedin_url, $3),
+                   full_name = $4,
+                   current_title = COALESCE($5, current_title),
+                   current_employer = COALESCE($6, current_employer),
+                   location = COALESCE($7, location),
+                   last_seen = now()
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(&r.source_id)
+            .bind(&linkedin)
+            .bind(&r.full_name)
+            .bind(&r.current_title)
+            .bind(&r.current_employer)
+            .bind(&r.location)
+            .execute(&mut **tx)
+            .await?;
+            id
+        }
+        None => {
+            sqlx::query_scalar(
+                "INSERT INTO person (org_id, pdl_id, linkedin_url, full_name, current_title,
+                                     current_employer, location, last_seen)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                 RETURNING id",
+            )
+            .bind(org_id)
+            .bind(&r.source_id)
+            .bind(&linkedin)
+            .bind(&r.full_name)
+            .bind(&r.current_title)
+            .bind(&r.current_employer)
+            .bind(&r.location)
+            .fetch_one(&mut **tx)
+            .await?
+        }
+    };
+
+    if !r.experience.is_empty() {
+        sqlx::query("DELETE FROM employment WHERE person_id = $1")
+            .bind(person_id)
+            .execute(&mut **tx)
+            .await?;
+        for x in &r.experience {
+            sqlx::query(
+                "INSERT INTO employment (org_id, person_id, employer, title, start_date, end_date)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(org_id)
+            .bind(person_id)
+            .bind(&x.employer)
+            .bind(&x.title)
+            .bind(x.start.as_deref().and_then(to_date))
+            .bind(x.end.as_deref().and_then(to_date))
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(person_id)
+}
+
+/// "2021", "2021-03" or "2021-03-15" to a date (first of the month or year).
+fn to_date(s: &str) -> Option<chrono::NaiveDate> {
+    let mut parts = s.split('-').map(|p| p.parse::<u32>().ok());
+    let year = parts.next()?? as i32;
+    let month = parts.next().flatten().unwrap_or(1);
+    let day = parts.next().flatten().unwrap_or(1);
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::{ExperienceRecord, SearchPage, SourceError};
+    use crate::testutil;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn provider_dates_parse() {
+        let d = |y, m, dd| chrono::NaiveDate::from_ymd_opt(y, m, dd);
+        assert_eq!(to_date("2021"), d(2021, 1, 1));
+        assert_eq!(to_date("2021-03"), d(2021, 3, 1));
+        assert_eq!(to_date("2021-03-15"), d(2021, 3, 15));
+        assert_eq!(to_date("soon"), None);
+        assert_eq!(to_date("2021-13"), None);
+    }
+
+    struct FakeSource {
+        records: Vec<PersonRecord>,
+        calls: AtomicUsize,
+        fail: bool,
+    }
+
+    impl FakeSource {
+        fn new(records: Vec<PersonRecord>) -> Self {
+            Self {
+                records,
+                calls: AtomicUsize::new(0),
+                fail: false,
+            }
+        }
+    }
+
+    impl PeopleSource for FakeSource {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn estimate_credits(&self, q: &SearchQuery) -> u32 {
+            q.size
+        }
+        async fn search(&self, _q: &SearchQuery) -> Result<SearchPage, SourceError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                return Err(SourceError::Network("down".into()));
+            }
+            Ok(SearchPage {
+                total: 99,
+                records: self.records.clone(),
+                scroll_token: None,
+                credits_used: self.records.len().max(1) as u32,
+            })
+        }
+    }
+
+    fn person(id: &str, linkedin: &str) -> PersonRecord {
+        PersonRecord {
+            source_id: id.into(),
+            full_name: format!("Person {id}"),
+            current_title: Some("Senior Security Engineer".into()),
+            current_employer: Some("ExamplePay".into()),
+            location: None,
+            linkedin_url: Some(linkedin.into()),
+            experience: vec![ExperienceRecord {
+                employer: "ExamplePay".into(),
+                title: Some("Senior Security Engineer".into()),
+                start: Some("2022-01".into()),
+                end: None,
+            }],
+        }
+    }
+
+    async fn setup() -> Option<(PgPool, SearchRequest)> {
+        let pool = testutil::pool().await?;
+        let org = testutil::org(&pool).await;
+        let (role, brief) = testutil::role_with_brief(&pool, org).await;
+        let req = SearchRequest {
+            org_id: org,
+            actor_id: None,
+            role_id: role,
+            brief_id: brief,
+            query: SearchQuery {
+                sql: "SELECT * FROM person".into(),
+                size: 2,
+                scroll_token: None,
+            },
+            idempotency_key: format!("k-{}", Uuid::new_v4()),
+        };
+        Some((pool, req))
+    }
+
+    async fn count(pool: &PgPool, sql: &str, org: Uuid) -> i64 {
+        sqlx::query_scalar(sql)
+            .bind(org)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn saves_people_candidacies_run_and_audit() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let src = FakeSource::new(vec![
+            person("p1", "https://www.linkedin.com/in/p-one/"),
+            person("p2", "linkedin.com/in/p-two"),
+        ]);
+
+        let out = run_search(&pool, &src, &req).await.unwrap();
+        let SearchOutcome::Ran {
+            run_id,
+            total,
+            pulled,
+            credits,
+            new_candidates,
+        } = out
+        else {
+            panic!("expected a run")
+        };
+        assert_eq!((total, pulled, credits, new_candidates), (99, 2, 2, 2));
+
+        let o = req.org_id;
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM person WHERE org_id = $1", o).await,
+            2
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM employment WHERE org_id = $1",
+                o
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM candidacy WHERE org_id = $1 AND state = 'found'",
+                o
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'search.run'",
+                o
+            )
+            .await,
+            1
+        );
+        let (pulled, credits): (i32, i32) =
+            sqlx::query_as("SELECT records_pulled, credits_used FROM run WHERE id = $1")
+                .bind(run_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((pulled, credits), (2, 2));
+        let li: String = sqlx::query_scalar(
+            "SELECT linkedin_url FROM person WHERE org_id = $1 AND pdl_id = 'p1'",
+        )
+        .bind(o)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(li, "linkedin.com/in/p-one", "stored normalised");
+    }
+
+    #[tokio::test]
+    async fn same_key_never_runs_or_charges_twice() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+
+        let first = run_search(&pool, &src, &req).await.unwrap();
+        let second = run_search(&pool, &src, &req).await.unwrap();
+        let SearchOutcome::Ran { run_id, .. } = first else {
+            panic!()
+        };
+        assert_eq!(second, SearchOutcome::AlreadyRan { run_id });
+        assert_eq!(src.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn person_found_again_is_merged_not_duplicated() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+        run_search(&pool, &src, &req).await.unwrap();
+
+        // Found again in a new search, under a different provider id but the same LinkedIn.
+        let again = FakeSource::new(vec![person("p1-new", "https://linkedin.com/in/P-One")]);
+        let req2 = SearchRequest {
+            idempotency_key: format!("k-{}", Uuid::new_v4()),
+            ..req.clone()
+        };
+        let out = run_search(&pool, &again, &req2).await.unwrap();
+
+        assert!(matches!(
+            out,
+            SearchOutcome::Ran {
+                new_candidates: 0,
+                ..
+            }
+        ));
+        let o = req.org_id;
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM person WHERE org_id = $1", o).await,
+            1
+        );
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM candidacy WHERE org_id = $1", o).await,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn paused_org_makes_no_call() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        sqlx::query("UPDATE org SET paid_calls_paused = true WHERE id = $1")
+            .bind(req.org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+
+        let err = run_search(&pool, &src, &req).await.unwrap_err();
+        assert!(err.downcast_ref::<PaidCallsPaused>().is_some());
+        assert_eq!(src.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn provider_failure_frees_the_key_for_a_retry() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let mut src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+        src.fail = true;
+        assert!(run_search(&pool, &src, &req).await.is_err());
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM run WHERE org_id = $1",
+                req.org_id
+            )
+            .await,
+            0
+        );
+
+        src.fail = false;
+        assert!(matches!(
+            run_search(&pool, &src, &req).await.unwrap(),
+            SearchOutcome::Ran { pulled: 1, .. }
+        ));
+    }
+}

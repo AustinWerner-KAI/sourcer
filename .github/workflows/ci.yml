@@ -30,13 +30,15 @@ jobs:
           workspaces: server
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
       - name: Migrations apply cleanly
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/sourcer
         run: |
           cargo install sqlx-cli --no-default-features --features postgres,rustls --locked
           sqlx migrate run
+      - run: cargo test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/sourcer
       - name: Generated TypeScript types are committed
         run: git diff --exit-code -- ../web/src/api/types
 
