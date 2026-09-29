@@ -19,6 +19,25 @@ pub async fn pool() -> Option<PgPool> {
     Some(pool)
 }
 
+/// A brand-new, empty database, for tests of behaviour that is global to the
+/// whole database (such as creating the first admin).
+pub async fn fresh_pool() -> Option<PgPool> {
+    let base = std::env::var("TEST_DATABASE_URL").ok()?;
+    let admin = PgPool::connect(&base)
+        .await
+        .expect("TEST_DATABASE_URL is set but the database is not reachable");
+    let name = format!("sourcer_t_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE DATABASE {name}"))
+        .execute(&admin)
+        .await
+        .expect("can create a test database");
+    let mut url = reqwest::Url::parse(&base).expect("TEST_DATABASE_URL is a URL");
+    url.set_path(&name);
+    let pool = PgPool::connect(url.as_str()).await.expect("fresh database");
+    crate::db::migrate(&pool).await.expect("migrations apply");
+    Some(pool)
+}
+
 pub async fn org(pool: &PgPool) -> Uuid {
     sqlx::query_scalar("INSERT INTO org (name) VALUES ('test') RETURNING id")
         .fetch_one(pool)
