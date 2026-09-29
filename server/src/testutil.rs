@@ -45,18 +45,20 @@ pub async fn org(pool: &PgPool) -> Uuid {
         .unwrap()
 }
 
-/// A role with a confirmed brief, ready to search against. Returns (role, brief).
+/// A role for "Test Client" (test-client.example) with a confirmed brief,
+/// ready to search against. Returns (role, brief).
 pub async fn role_with_brief(pool: &PgPool, org_id: Uuid) -> (Uuid, Uuid) {
     let role: Uuid = sqlx::query_scalar(
-        "INSERT INTO role (org_id, title) VALUES ($1, 'Senior IAM Engineer') RETURNING id",
+        "WITH c AS (INSERT INTO client (org_id, name, domain) VALUES ($1, 'Test Client', 'test-client.example') RETURNING id)
+         INSERT INTO role (org_id, title, client_id) SELECT $1, 'Senior IAM Engineer', id FROM c RETURNING id",
     )
     .bind(org_id)
     .fetch_one(pool)
     .await
     .unwrap();
     let brief: Uuid = sqlx::query_scalar(
-        "INSERT INTO brief (org_id, role_id, version, level, must_haves, tools, locations, employer_types)
-         VALUES ($1, $2, 1, 'senior', '[]', '[]', '[]', '[]') RETURNING id",
+        "INSERT INTO brief (org_id, role_id, version, levels, must_haves, tools, locations, employer_types, confirmed_at)
+         VALUES ($1, $2, 1, '[\"Senior\"]', '[\"IAM\"]', '[]', '[\"Dubai\"]', '[\"Trading firms\"]', now()) RETURNING id",
     )
     .bind(org_id)
     .bind(role)
