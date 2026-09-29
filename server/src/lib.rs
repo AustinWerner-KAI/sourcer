@@ -9,8 +9,10 @@ pub mod db;
 pub mod domain;
 pub mod jobs;
 pub mod policy;
+pub mod ratelimit;
 pub mod search;
 pub mod sources;
+pub mod team;
 pub mod worker;
 
 #[cfg(test)]
