@@ -31,9 +31,13 @@ async fn main() -> anyhow::Result<()> {
         app::AppState::new(Some(pool), auth),
         config.web_dir.as_deref(),
     );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    // Connection info lets the sign-in limit count attempts per address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown())
+    .await?;
 
     let _ = stop.send(true);
     worker.await?;
