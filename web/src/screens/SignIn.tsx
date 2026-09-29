@@ -8,6 +8,7 @@ const reasons: Record<string, string> = {
   browser: "Please start sign-in again from this browser.",
   disabled: "This account has been switched off. Ask an admin if you need access.",
   mismatch: "This email is linked to a different Microsoft account. Ask an admin to check it.",
+  busy: "Too many sign-in attempts. Wait a minute, then try again.",
 };
 
 export function SignIn() {
