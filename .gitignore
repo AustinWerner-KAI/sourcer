@@ -1,4 +1,19 @@
-node_modules/
-campaigns/*.json
+# Rust
+server/target/
+server/bindings/
+
+# Node
+web/node_modules/
+web/dist/
+
+# Secrets and local data
+.env
+deploy/.env
+*.pem
+*.key
+
+# OS / editors
 .DS_Store
-*.log
+.idea/
+.vscode/
+web/*.tsbuildinfo
