@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use sourcer_server::{app, config::Config, db, worker::Worker};
+use sourcer_server::{ai, app, config::Config, db, worker::Worker};
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
@@ -27,10 +27,15 @@ async fn main() -> anyhow::Result<()> {
     if auth.is_none() {
         tracing::warn!("Microsoft 365 sign-in is not configured; set M365_TENANT_ID, M365_CLIENT_ID and M365_CLIENT_SECRET");
     }
-    let router = app::router_with_web(
-        app::AppState::new(Some(pool), auth),
-        config.web_dir.as_deref(),
-    );
+    let mut state = app::AppState::new(Some(pool), auth);
+    state.ai = std::sync::Arc::new(ai::Claude::new(
+        config.anthropic_api_key.clone(),
+        config.anthropic_model.clone(),
+    ));
+    if !state.ai.configured() {
+        tracing::warn!("Brief drafting is off; set ANTHROPIC_API_KEY to turn it on");
+    }
+    let router = app::router_with_web(state, config.web_dir.as_deref());
     // Connection info lets the sign-in limit count attempts per address.
     axum::serve(
         listener,
