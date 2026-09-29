@@ -31,6 +31,9 @@ services:
       # Providers: leave blank until the key exists; the feature stays off.
       PDL_API_KEY: ${PDL_API_KEY:-}
       APOLLO_API_KEY: ${APOLLO_API_KEY:-}
+      # Claude drafts briefs from job specs; off until the key is set.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
       # Microsoft 365 sign-in; off until all three are set.
       M365_TENANT_ID: ${M365_TENANT_ID:-}
       M365_CLIENT_ID: ${M365_CLIENT_ID:-}
