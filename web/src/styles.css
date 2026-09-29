@@ -1,0 +1,38 @@
+/* Austin Werner brand: black ground, gold accent. Tokens only; components use var(). */
+:root {
+  --bg: #000000;
+  --surface: #111111;
+  --surface-2: #1a1a1a;
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #ffffff;
+  --text-2: #c9c9c9;
+  --muted: #9e9e9e;
+  --gold: #ffd100;
+  --gold-soft: rgba(255, 209, 0, 0.12);
+  --warn: #ff9b73;
+  --font: "Space Grotesk", system-ui, sans-serif;
+  --display: "Unbounded", "Space Grotesk", sans-serif;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+a { color: var(--gold); text-decoration: none; }
+button { font-family: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.shell { display: flex; min-height: 100vh; }
+.nav { width: 232px; flex-shrink: 0; padding: 28px 20px; display: flex; flex-direction: column; gap: 32px; background: #0b0b0b; border-right: 1px solid var(--line); }
+.brand { font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.14em; }
+.brand-sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.nav-links { display: flex; flex-direction: column; gap: 4px; }
+.nav-links a { padding: 12px 14px; border-radius: 8px; color: #d6d6d6; font-size: 15px; }
+.nav-links a.active { background: var(--gold-soft); color: var(--gold); font-weight: 600; }
+.status { margin-top: auto; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; color: var(--muted); }
+.status strong { display: block; font-size: 14px; color: var(--text); margin-top: 4px; }
+
+main { flex: 1; padding: 36px 48px; display: flex; flex-direction: column; gap: 24px; }
+.eyebrow { font-size: 13px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+h1 { margin: 8px 0 0; font-family: var(--display); font-size: 30px; font-weight: 600; }
+.panel { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.panel p { margin: 0; color: var(--text-2); line-height: 1.5; }
