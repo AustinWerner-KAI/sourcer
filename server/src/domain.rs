@@ -81,6 +81,17 @@ pub struct Health {
     pub database: bool,
 }
 
+/// The signed-in user, as the web app sees them.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Me {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub email: String,
+    /// "admin" or "resourcer".
+    pub role: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::CandidacyState::*;
