@@ -1,15 +1,18 @@
 //! Sourcer server: API, background worker and scheduler for resourcing and outreach.
 //! See docs/SRS.md for requirements and docs/README.md for the design.
 
+pub mod ai;
 pub mod app;
 pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
 pub mod domain;
+pub mod employer;
 pub mod jobs;
 pub mod policy;
 pub mod ratelimit;
+pub mod roles;
 pub mod search;
 pub mod sources;
 pub mod team;
