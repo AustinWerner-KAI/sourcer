@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 
+use crate::auth::AuthConfig;
+
 /// Runtime configuration, read from environment variables only.
 /// Secrets (API keys) are never logged and never sent to the browser.
 #[derive(Clone)]
@@ -12,6 +14,14 @@ pub struct Config {
     pub pdl_api_key: Option<String>,
     /// Apollo. Contact lookups are refused until this is set.
     pub apollo_api_key: Option<String>,
+    /// Microsoft 365 app registration. Sign-in is off until all three are set.
+    pub m365_tenant_id: Option<String>,
+    pub m365_client_id: Option<String>,
+    pub m365_client_secret: Option<String>,
+    /// The address people use to reach Sourcer, e.g. `http://localhost:8080`.
+    pub public_url: String,
+    /// Made admin on their first sign-in.
+    pub admin_email: Option<String>,
 }
 
 impl std::fmt::Debug for Config {
@@ -23,6 +33,11 @@ impl std::fmt::Debug for Config {
             .field("web_dir", &self.web_dir)
             .field("pdl_api_key", &set(&self.pdl_api_key))
             .field("apollo_api_key", &set(&self.apollo_api_key))
+            .field("m365_tenant_id", &self.m365_tenant_id)
+            .field("m365_client_id", &self.m365_client_id)
+            .field("m365_client_secret", &set(&self.m365_client_secret))
+            .field("public_url", &self.public_url)
+            .field("admin_email", &self.admin_email)
             .finish()
     }
 }
@@ -40,7 +55,24 @@ impl Config {
             web_dir: std::env::var("WEB_DIR").ok(),
             pdl_api_key: secret("PDL_API_KEY"),
             apollo_api_key: secret("APOLLO_API_KEY"),
+            m365_tenant_id: secret("M365_TENANT_ID"),
+            m365_client_id: secret("M365_CLIENT_ID"),
+            m365_client_secret: secret("M365_CLIENT_SECRET"),
+            public_url: std::env::var("PUBLIC_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".into()),
+            admin_email: secret("ADMIN_EMAIL"),
         })
+    }
+
+    /// Sign-in settings, or `None` if the app registration is incomplete.
+    pub fn auth(&self) -> Option<AuthConfig> {
+        Some(AuthConfig::new(
+            self.m365_tenant_id.clone()?,
+            self.m365_client_id.clone()?,
+            self.m365_client_secret.clone()?,
+            &self.public_url,
+            self.admin_email.clone(),
+        ))
     }
 }
 
@@ -56,9 +88,23 @@ mod tests {
             web_dir: None,
             pdl_api_key: Some("pdl-secret".into()),
             apollo_api_key: None,
+            m365_tenant_id: Some("t".into()),
+            m365_client_id: Some("c".into()),
+            m365_client_secret: Some("ms-secret".into()),
+            public_url: "http://localhost:8080".into(),
+            admin_email: None,
         };
         let out = format!("{c:?}");
-        assert!(!out.contains("pw") && !out.contains("pdl-secret"));
+        assert!(!out.contains("pw") && !out.contains("pdl-secret") && !out.contains("ms-secret"));
         assert!(out.contains("<set>") && out.contains("<unset>"));
+        assert!(c.auth().is_some());
+        let incomplete = Config {
+            m365_client_secret: None,
+            ..c
+        };
+        assert!(
+            incomplete.auth().is_none(),
+            "sign-in stays off until all three are set"
+        );
     }
 }
