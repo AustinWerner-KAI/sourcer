@@ -14,6 +14,12 @@ pub mod action {
     pub const USER_INVITED: &str = "team.invite";
     pub const USER_DISABLED: &str = "team.disable";
     pub const USER_ENABLED: &str = "team.enable";
+    pub const CLIENT_CREATED: &str = "client.create";
+    pub const ROLE_CREATED: &str = "role.create";
+    pub const ROLE_CLIENT_SET: &str = "role.client_set";
+    pub const BRIEF_DRAFTED: &str = "brief.draft";
+    pub const BRIEF_SAVED: &str = "brief.save";
+    pub const BRIEF_CONFIRMED: &str = "brief.confirm";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.
