@@ -4,6 +4,8 @@
 //! - The same idempotency key never runs or charges twice.
 //! - People are merged by provider id or LinkedIn URL, so a person found twice
 //!   is one record, with one candidacy per role.
+//! - Staff of the hiring client and of off-limits clients are never saved,
+//!   whatever the query said.
 
 use anyhow::{bail, Context, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -11,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     audit,
+    employer::{self, Verdict},
     policy::normalise_identifier,
     sources::{PeopleSource, PersonRecord, SearchQuery},
 };
@@ -34,6 +37,8 @@ pub enum SearchOutcome {
         pulled: usize,
         credits: u32,
         new_candidates: usize,
+        /// Records dropped because they work at the hiring or an off-limits client.
+        left_out: usize,
     },
     AlreadyRan {
         run_id: Uuid,
@@ -64,6 +69,18 @@ pub async fn run_search<S: PeopleSource>(
     if paused {
         bail!(PaidCallsPaused);
     }
+    // Without a client there is no one to lock out, so never search.
+    let has_client: bool =
+        sqlx::query_scalar("SELECT client_id IS NOT NULL FROM role WHERE id = $1 AND org_id = $2")
+            .bind(req.role_id)
+            .bind(req.org_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+    if !has_client {
+        bail!("this role has no client, so it cannot be searched");
+    }
+    let locked_out = employer::locked_out(pool, req.org_id, req.role_id).await?;
 
     let Some(run_id) = reserve_run(pool, req).await? else {
         let run_id =
@@ -89,17 +106,37 @@ pub async fn run_search<S: PeopleSource>(
 
     let mut tx = pool.begin().await?;
     let mut new_candidates = 0;
+    let mut left_out = 0;
     for record in &page.records {
+        let current = std::iter::once((
+            record.current_employer.as_deref().unwrap_or(""),
+            record.current_employer_domain.as_deref(),
+        ))
+        .chain(
+            record
+                .experience
+                .iter()
+                .filter(|x| x.end.is_none())
+                .map(|x| (x.employer.as_str(), x.employer_domain.as_deref())),
+        );
+        let verdict = employer::check(current, &locked_out);
+        // Always refresh what we know about the person, so someone saved
+        // earlier who has since joined the client is now seen as locked out.
         let person_id = upsert_person(&mut tx, req.org_id, record).await?;
+        if verdict == Verdict::LockedOut {
+            left_out += 1;
+            continue;
+        }
         let inserted = sqlx::query(
-            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id)
-             VALUES ($1, $2, $3, $4)
+            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id, employer_unknown)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (person_id, role_id) DO NOTHING",
         )
         .bind(req.org_id)
         .bind(person_id)
         .bind(req.role_id)
         .bind(req.brief_id)
+        .bind(verdict == Verdict::Unknown)
         .execute(&mut *tx)
         .await?;
         new_candidates += inserted.rows_affected() as usize;
@@ -126,6 +163,7 @@ pub async fn run_search<S: PeopleSource>(
         pulled: page.records.len(),
         credits: page.credits_used,
         new_candidates,
+        left_out,
     })
 }
 
@@ -176,6 +214,7 @@ async fn upsert_person(
                    full_name = $4,
                    current_title = COALESCE($5, current_title),
                    current_employer = COALESCE($6, current_employer),
+                   current_employer_domain = CASE WHEN $6 IS NOT NULL THEN $8 ELSE current_employer_domain END,
                    location = COALESCE($7, location),
                    last_seen = now()
                  WHERE id = $1",
@@ -187,6 +226,7 @@ async fn upsert_person(
             .bind(&r.current_title)
             .bind(&r.current_employer)
             .bind(&r.location)
+            .bind(&r.current_employer_domain)
             .execute(&mut **tx)
             .await?;
             id
@@ -194,8 +234,8 @@ async fn upsert_person(
         None => {
             sqlx::query_scalar(
                 "INSERT INTO person (org_id, pdl_id, linkedin_url, full_name, current_title,
-                                     current_employer, location, last_seen)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                                     current_employer, location, current_employer_domain, last_seen)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
                  RETURNING id",
             )
             .bind(org_id)
@@ -205,6 +245,7 @@ async fn upsert_person(
             .bind(&r.current_title)
             .bind(&r.current_employer)
             .bind(&r.location)
+            .bind(&r.current_employer_domain)
             .fetch_one(&mut **tx)
             .await?
         }
@@ -217,8 +258,8 @@ async fn upsert_person(
             .await?;
         for x in &r.experience {
             sqlx::query(
-                "INSERT INTO employment (org_id, person_id, employer, title, start_date, end_date)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO employment (org_id, person_id, employer, title, start_date, end_date, employer_domain)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(org_id)
             .bind(person_id)
@@ -226,6 +267,7 @@ async fn upsert_person(
             .bind(&x.title)
             .bind(x.start.as_deref().and_then(to_date))
             .bind(x.end.as_deref().and_then(to_date))
+            .bind(&x.employer_domain)
             .execute(&mut **tx)
             .await?;
         }
@@ -302,10 +344,12 @@ mod tests {
             full_name: format!("Person {id}"),
             current_title: Some("Senior Security Engineer".into()),
             current_employer: Some("ExamplePay".into()),
+            current_employer_domain: None,
             location: None,
             linkedin_url: Some(linkedin.into()),
             experience: vec![ExperienceRecord {
                 employer: "ExamplePay".into(),
+                employer_domain: None,
                 title: Some("Senior Security Engineer".into()),
                 start: Some("2022-01".into()),
                 end: None,
@@ -341,6 +385,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hiring_client_and_off_limits_staff_are_never_saved() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        // The role is for ExamplePay; OtherBank is off-limits for every role.
+        let client: Uuid = sqlx::query_scalar(
+            "INSERT INTO client (org_id, name, domain) VALUES ($1, 'ExamplePay Inc.', 'examplepay.com') RETURNING id",
+        )
+        .bind(req.org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO client (org_id, name, off_limits) VALUES ($1, 'OtherBank', true)")
+            .bind(req.org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE role SET client_id = $2 WHERE id = $1")
+            .bind(req.role_id)
+            .bind(client)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut at_bank = person("p2", "linkedin.com/in/p-two");
+        at_bank.current_employer = Some("otherbank".into());
+        at_bank.experience.clear();
+        let mut by_domain = person("p3", "linkedin.com/in/p-three");
+        by_domain.current_employer = Some("EP Global".into());
+        by_domain.current_employer_domain = Some("careers.examplepay.com".into());
+        by_domain.experience.clear();
+        // Headline job elsewhere, but still has a current job at the client.
+        let mut second_job = person("p4", "linkedin.com/in/p-four");
+        second_job.current_employer = Some("Kraken".into());
+        let mut elsewhere = person("p5", "linkedin.com/in/p-five");
+        elsewhere.current_employer = Some("Kraken".into());
+        elsewhere.experience.clear();
+        let mut unknown = person("p6", "linkedin.com/in/p-six");
+        unknown.current_employer = None;
+        unknown.experience.clear();
+        let src = FakeSource::new(vec![
+            person("p1", "linkedin.com/in/p-one"),
+            at_bank,
+            by_domain,
+            second_job,
+            elsewhere,
+            unknown,
+        ]);
+
+        let out = run_search(&pool, &src, &req).await.unwrap();
+        assert!(matches!(
+            out,
+            SearchOutcome::Ran {
+                pulled: 6,
+                new_candidates: 2,
+                left_out: 4,
+                ..
+            }
+        ));
+        let saved: Vec<(String, bool)> = sqlx::query_as(
+            "SELECT p.full_name, c.employer_unknown FROM candidacy c JOIN person p ON p.id = c.person_id
+             WHERE c.role_id = $1 ORDER BY p.full_name",
+        )
+        .bind(req.role_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            saved,
+            [
+                ("Person p5".to_string(), false),
+                ("Person p6".to_string(), true)
+            ],
+            "only the Kraken person, and the unknown one flagged for a check"
+        );
+    }
+
+    #[tokio::test]
+    async fn someone_who_joins_the_client_later_is_then_locked_out() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let mut jane = person("p1", "linkedin.com/in/jane");
+        jane.current_employer = Some("Kraken".into());
+        jane.experience.clear();
+        run_search(&pool, &FakeSource::new(vec![jane.clone()]), &req)
+            .await
+            .unwrap();
+        let person: Uuid = sqlx::query_scalar("SELECT id FROM person WHERE org_id = $1")
+            .bind(req.org_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let check = || employer::check_person(&pool, req.org_id, req.role_id, person);
+        assert_eq!(check().await.unwrap(), Verdict::Clear);
+
+        // She joins the role's client (testutil's "Test Client"); a later search sees it.
+        jane.current_employer = Some("Test Client".into());
+        let again = SearchRequest {
+            idempotency_key: format!("k-{}", Uuid::new_v4()),
+            ..req.clone()
+        };
+        run_search(&pool, &FakeSource::new(vec![jane]), &again)
+            .await
+            .unwrap();
+        assert_eq!(check().await.unwrap(), Verdict::LockedOut);
+    }
+
+    #[tokio::test]
+    async fn a_role_without_a_client_is_never_searched() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        sqlx::query("UPDATE role SET client_id = NULL WHERE id = $1")
+            .bind(req.role_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+        assert!(run_search(&pool, &src, &req).await.is_err());
+        assert_eq!(src.calls.load(Ordering::SeqCst), 0, "no credits spent");
+    }
+
+    #[tokio::test]
     async fn saves_people_candidacies_run_and_audit() {
         let Some((pool, req)) = setup().await else {
             return;
@@ -357,6 +524,7 @@ mod tests {
             pulled,
             credits,
             new_candidates,
+            ..
         } = out
         else {
             panic!("expected a run")
