@@ -51,3 +51,25 @@ h1 { margin: 8px 0 0; font-family: var(--display); font-size: 30px; font-weight:
 .btn-primary { display: block; padding: 14px 18px; border-radius: var(--radius); background: var(--gold); color: #000; font-weight: 600; text-align: center; }
 .btn-primary:hover { filter: brightness(1.06); }
 .signin-note { margin: 14px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+
+.panel-title { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.panel .panel-note { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.invite { display: grid; grid-template-columns: 1fr 1.4fr 160px auto; gap: 12px; align-items: end; }
+.invite label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.invite input, .invite select { padding: 11px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: inherit; font-size: 15px; }
+.invite .btn-primary { border: 0; font-size: 15px; }
+.invite .btn-primary:disabled { opacity: 0.6; cursor: default; }
+.panel .form-error { margin: 14px 0 0; color: var(--warn); font-size: 14px; }
+.team { width: 100%; border-collapse: collapse; font-size: 14px; }
+.team th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; padding: 0 12px 10px 0; border-bottom: 1px solid var(--line); }
+.team td { padding: 14px 12px 14px 0; border-bottom: 1px solid var(--line); color: var(--text-2); }
+.team td:first-child { color: var(--text); font-weight: 500; }
+.team tr.is-off td { color: var(--muted); }
+.team .actions { text-align: right; }
+.team .actions .link-button { margin: 0; }
+.you { margin-left: 8px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill-active { background: var(--gold-soft); color: var(--gold); }
+.pill-invited { background: rgba(255, 255, 255, 0.06); color: var(--text-2); }
+.pill-disabled { background: rgba(255, 155, 115, 0.1); color: var(--warn); }
+@media (max-width: 900px) { .invite { grid-template-columns: 1fr; } }
