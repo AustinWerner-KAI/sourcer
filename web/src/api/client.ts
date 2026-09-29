@@ -19,6 +19,7 @@ export const api = {
   },
 
   logout: async (): Promise<void> => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    const res = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    if (!res.ok) throw new Error(`Sign-out failed: ${res.status}`);
   },
 };
