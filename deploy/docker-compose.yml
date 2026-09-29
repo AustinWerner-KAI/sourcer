@@ -31,6 +31,12 @@ services:
       # Providers: leave blank until the key exists; the feature stays off.
       PDL_API_KEY: ${PDL_API_KEY:-}
       APOLLO_API_KEY: ${APOLLO_API_KEY:-}
+      # Microsoft 365 sign-in; off until all three are set.
+      M365_TENANT_ID: ${M365_TENANT_ID:-}
+      M365_CLIENT_ID: ${M365_CLIENT_ID:-}
+      M365_CLIENT_SECRET: ${M365_CLIENT_SECRET:-}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     ports:
       # Bind to localhost only; expose through your VPN or reverse proxy.
       - "127.0.0.1:8080:8080"
