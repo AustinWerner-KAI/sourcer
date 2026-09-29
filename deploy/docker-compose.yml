@@ -1,0 +1,36 @@
+# Private deployment: Sourcer server + Postgres on one box.
+# Usage: cp ../.env.example .env, fill values, then `docker compose up -d --build`.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sourcer
+      POSTGRES_USER: sourcer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sourcer -d sourcer"]
+      interval: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://sourcer:${POSTGRES_PASSWORD}@db:5432/sourcer
+      BIND_ADDR: 0.0.0.0:8080
+      WEB_DIR: /srv/web
+      RUST_LOG: info
+    ports:
+      # Bind to localhost only; expose through your VPN or reverse proxy.
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  pgdata:
