@@ -92,6 +92,53 @@ pub struct Me {
     pub role: String,
 }
 
+/// What a user may do. Admins also manage the team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, sqlx::Type)]
+#[sqlx(type_name = "user_role", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum Role {
+    Admin,
+    Resourcer,
+}
+
+/// Where a team member is: invited but never signed in, active, or switched off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum MemberStatus {
+    Invited,
+    Active,
+    Disabled,
+}
+
+/// One person on the team, as the Team screen shows them.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct TeamMember {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub email: String,
+    pub role: Role,
+    pub status: MemberStatus,
+}
+
+/// An admin invites someone by their Microsoft 365 email address.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct NewMember {
+    pub name: String,
+    pub email: String,
+    pub role: Role,
+}
+
+/// Switch a team member off or back on.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct MemberUpdate {
+    pub disabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::CandidacyState::*;
