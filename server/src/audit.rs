@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub mod action {
     pub const SEARCH_RUN: &str = "search.run";
     pub const JOB_FAILED: &str = "job.failed";
+    pub const SIGN_IN: &str = "auth.sign_in";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.
