@@ -28,6 +28,9 @@ services:
       BIND_ADDR: 0.0.0.0:8080
       WEB_DIR: /srv/web
       RUST_LOG: info
+      # Providers: leave blank until the key exists; the feature stays off.
+      PDL_API_KEY: ${PDL_API_KEY:-}
+      APOLLO_API_KEY: ${APOLLO_API_KEY:-}
     ports:
       # Bind to localhost only; expose through your VPN or reverse proxy.
       - "127.0.0.1:8080:8080"
