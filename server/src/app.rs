@@ -1550,6 +1550,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_location_is_named_with_its_unsaved_credits() {
+        let Some(pool) = testutil::pool().await else {
+            return;
+        };
+        let org = testutil::org(&pool).await;
+        let (_, me) = signed_in(&pool, org, "resourcer").await;
+        let (url, _) = fake_pdl(245).await;
+        let (app, pdl) = searching_app(pool.clone(), &url);
+        let uri = searchable_role(&app, &me).await;
+        let s = json_body(
+            send(
+                &app,
+                json_req(
+                    "POST",
+                    &format!("{uri}/search/count"),
+                    &me,
+                    json!({"key": "c"}),
+                ),
+            )
+            .await,
+        )
+        .await;
+        let body = json!({"count_id": s["count"]["id"], "confirmed": false, "key": "p",
+            "picks": [{"location": "New York", "size": 25}, {"location": "Dubai", "size": 25}]});
+        let s = json_body(
+            send(
+                &app,
+                json_req("POST", &format!("{uri}/search/pull"), &me, body),
+            )
+            .await,
+        )
+        .await;
+        let pull_id = s["pull"]["id"].as_str().unwrap().to_string();
+        let jobs: Vec<(Uuid, Uuid, String, Value, i32)> = sqlx::query_as(
+            "SELECT id, org_id, kind, payload, attempts FROM job
+             WHERE kind = 'search.pull' AND payload->>'pull_id' = $1",
+        )
+        .bind(&pull_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let handler = searching::PullHandler {
+            pool: pool.clone(),
+            source: pdl,
+        };
+        for (id, org_id, kind, payload, attempts) in &jobs {
+            let job = crate::jobs::Job {
+                id: *id,
+                org_id: *org_id,
+                kind: kind.clone(),
+                payload: payload.clone(),
+                attempts: *attempts,
+            };
+            crate::worker::JobHandler::handle(&handler, &job)
+                .await
+                .unwrap();
+        }
+        // Dubai was charged but its save never finished, and its job gave up.
+        sqlx::query(
+            "UPDATE run SET finished_at = NULL WHERE pull_id = $1::uuid AND location = 'Dubai'",
+        )
+        .bind(&pull_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE job SET status = 'failed' WHERE payload->>'pull_id' = $1
+             AND payload->>'location' = 'Dubai'",
+        )
+        .bind(&pull_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+        let p = &s["pull"];
+        assert_eq!(
+            (
+                p["done"].as_bool(),
+                p["failed_locations"].clone(),
+                p["pulled"].as_i64(),
+                p["credits_used"].as_i64(),
+                p["credits_unsaved"].as_i64(),
+            ),
+            (Some(true), json!(["Dubai"]), Some(25), Some(50), Some(25))
+        );
+    }
+
+    #[tokio::test]
     async fn paused_organisation_cannot_count() {
         let Some(pool) = testutil::pool().await else {
             return;
