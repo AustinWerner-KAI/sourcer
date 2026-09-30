@@ -1,4 +1,4 @@
-//! Clients, roles and the five-line brief (SRS F2, F3, F4, F8).
+//! Clients, roles and the brief (SRS F2, F3, F4, F8).
 //!
 //! - A role belongs to a client. The client's staff, and every off-limits
 //!   client's staff, are locked out of the role and cannot be put back.
@@ -23,8 +23,8 @@ use crate::{
     audit,
     auth::CurrentUser,
     domain::{
-        Brief, BriefLines, BriefTool, Client, ConfirmBrief, LockedOut, NewClient, NewRole,
-        RoleDetail, RoleSummary, RoleUpdate,
+        Brief, BriefDomain, BriefLines, BriefTool, Client, ConfirmBrief, LockedOut, NewClient,
+        NewRole, RoleDetail, RoleSummary, RoleUpdate,
     },
     employer,
 };
@@ -65,6 +65,9 @@ pub fn problems(l: &BriefLines) -> Vec<String> {
     if l.must_haves.len() > 3 {
         out.push("Keep to three must-haves.".to_string());
     }
+    if l.domains.is_empty() {
+        out.push("Add at least one domain focus.".to_string());
+    }
     let unanswered = l.tools.iter().filter(|t| t.status.is_none()).count();
     if unanswered > 0 {
         out.push(format!(
@@ -102,6 +105,7 @@ fn tidy(mut l: BriefLines) -> Result<BriefLines, &'static str> {
     l.levels = list(l.levels)?;
     l.excluded_titles = list(l.excluded_titles)?;
     l.must_haves = list(l.must_haves)?;
+    l.capabilities = list(l.capabilities)?;
     l.locations = list(l.locations)?;
     l.employer_types = list(l.employer_types)?;
     l.leave_out = list(l.leave_out)?;
@@ -122,6 +126,23 @@ fn tidy(mut l: BriefLines) -> Result<BriefLines, &'static str> {
         }
     }
     l.tools = tools;
+    if l.domains.len() > MAX_ITEMS {
+        return Err("Too many domains.");
+    }
+    let mut domains: Vec<BriefDomain> = Vec::new();
+    for d in l.domains {
+        let name = d.name.trim().to_string();
+        if name.chars().count() > MAX_ITEM_CHARS {
+            return Err("One entry is too long.");
+        }
+        if !name.is_empty() && !domains.iter().any(|o| o.name.eq_ignore_ascii_case(&name)) {
+            domains.push(BriefDomain {
+                name,
+                weight: d.weight,
+            });
+        }
+    }
+    l.domains = domains;
     Ok(l)
 }
 
@@ -308,6 +329,8 @@ type BriefRow = (
     SqlJson<Vec<String>>,
     SqlJson<Vec<String>>,
     SqlJson<Vec<String>>,
+    SqlJson<Vec<String>>,
+    SqlJson<Vec<BriefDomain>>,
     SqlJson<Vec<BriefTool>>,
     SqlJson<Vec<String>>,
     bool,
@@ -318,8 +341,8 @@ type BriefRow = (
 );
 
 const BRIEF_COLUMNS: &str =
-    "id, version, levels, excluded_titles, must_haves, tools, locations, remote,
-     employer_types, leave_out, drafted_by_ai, confirmed_at IS NOT NULL";
+    "id, version, levels, excluded_titles, must_haves, capabilities, domains, tools, locations,
+     remote, employer_types, leave_out, drafted_by_ai, confirmed_at IS NOT NULL";
 
 fn brief(r: BriefRow) -> Brief {
     Brief {
@@ -329,14 +352,16 @@ fn brief(r: BriefRow) -> Brief {
             levels: r.2 .0,
             excluded_titles: r.3 .0,
             must_haves: r.4 .0,
-            tools: r.5 .0,
-            locations: r.6 .0,
-            remote: r.7,
-            employer_types: r.8 .0,
-            leave_out: r.9 .0,
+            capabilities: r.5 .0,
+            domains: r.6 .0,
+            tools: r.7 .0,
+            locations: r.8 .0,
+            remote: r.9,
+            employer_types: r.10 .0,
+            leave_out: r.11 .0,
         },
-        drafted_by_ai: r.10,
-        confirmed: r.11,
+        drafted_by_ai: r.12,
+        confirmed: r.13,
     }
 }
 
@@ -526,7 +551,7 @@ async fn write_draft(
     let updated: Option<(Uuid, i32)> = sqlx::query_as(
         "UPDATE brief SET levels = $2, excluded_titles = $3, must_haves = $4, tools = $5,
                 locations = $6, remote = $7, employer_types = $8, leave_out = $9,
-                drafted_by_ai = coalesce($10, drafted_by_ai)
+                drafted_by_ai = coalesce($10, drafted_by_ai), capabilities = $11, domains = $12
          WHERE role_id = $1 AND confirmed_at IS NULL
          RETURNING id, version",
     )
@@ -540,6 +565,8 @@ async fn write_draft(
     .bind(SqlJson(&lines.employer_types))
     .bind(SqlJson(&lines.leave_out))
     .bind(drafted_by_ai)
+    .bind(SqlJson(&lines.capabilities))
+    .bind(SqlJson(&lines.domains))
     .fetch_optional(&mut **tx)
     .await?;
     if let Some(done) = updated {
@@ -547,8 +574,10 @@ async fn write_draft(
     }
     Ok(sqlx::query_as(
         "INSERT INTO brief (org_id, role_id, version, levels, excluded_titles, must_haves, tools,
-                            locations, remote, employer_types, leave_out, drafted_by_ai)
-         SELECT $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                            locations, remote, employer_types, leave_out, drafted_by_ai,
+                            capabilities, domains)
+         SELECT $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                $12, $13
          FROM brief WHERE role_id = $2
          RETURNING id, version",
     )
@@ -563,14 +592,17 @@ async fn write_draft(
     .bind(SqlJson(&lines.employer_types))
     .bind(SqlJson(&lines.leave_out))
     .bind(drafted_by_ai.unwrap_or(false))
+    .bind(SqlJson(&lines.capabilities))
+    .bind(SqlJson(&lines.domains))
     .fetch_one(&mut **tx)
     .await?)
 }
 
 /// A fresh draft from Claude replaces the spec-based lines (levels,
-/// must-haves, tools, locations) but keeps the resourcer's own choices:
-/// excluded titles, employer types, leave-out list, and every tool answer
-/// for a tool that is still named.
+/// must-haves, capabilities, domains, tools, locations) but keeps the
+/// resourcer's own choices: excluded titles, employer types, leave-out list,
+/// every tool answer for a tool that is still named, and the Must or Plus
+/// choice for a domain that is still named.
 pub fn merge_redraft(fresh: BriefLines, old: Option<BriefLines>) -> BriefLines {
     let Some(old) = old else {
         return fresh;
@@ -587,8 +619,21 @@ pub fn merge_redraft(fresh: BriefLines, old: Option<BriefLines>) -> BriefLines {
             BriefTool { status, ..t }
         })
         .collect();
+    let domains = fresh
+        .domains
+        .into_iter()
+        .map(|d| {
+            let weight = old
+                .domains
+                .iter()
+                .find(|o| o.name.eq_ignore_ascii_case(&d.name))
+                .map_or(d.weight, |o| o.weight);
+            BriefDomain { weight, ..d }
+        })
+        .collect();
     BriefLines {
         tools,
+        domains,
         excluded_titles: if old.excluded_titles.is_empty() {
             fresh.excluded_titles
         } else {
@@ -604,7 +649,7 @@ pub fn merge_redraft(fresh: BriefLines, old: Option<BriefLines>) -> BriefLines {
     }
 }
 
-/// POST /api/roles/:id/brief/draft: Claude drafts the five lines from the spec.
+/// POST /api/roles/:id/brief/draft: Claude drafts the brief from the spec.
 pub async fn draft_brief(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -637,7 +682,7 @@ pub async fn draft_brief(
         Err(AiError::NotConfigured) => {
             return refuse(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "Drafting is not set up yet. Fill in the five lines yourself for now.",
+                "Drafting is not set up yet. Fill in the brief yourself for now.",
             )
         }
         Err(AiError::EmptySpec) => {
@@ -787,13 +832,22 @@ pub async fn confirm_brief(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ToolStatus;
+    use crate::domain::{DomainWeight, ToolStatus};
+
+    fn dom(name: &str, weight: DomainWeight) -> BriefDomain {
+        BriefDomain {
+            name: name.into(),
+            weight,
+        }
+    }
 
     fn ready() -> BriefLines {
         BriefLines {
             levels: vec!["Senior".into()],
             excluded_titles: vec!["Director".into()],
             must_haves: vec!["IAM".into()],
+            capabilities: vec![],
+            domains: vec![dom("Custody", DomainWeight::Must)],
             tools: vec![BriefTool {
                 name: "Okta".into(),
                 status: Some(ToolStatus::Required),
@@ -834,7 +888,8 @@ mod tests {
     fn missing_lines_are_named() {
         let l = BriefLines::default();
         let p = problems(&l);
-        assert_eq!(p.len(), 4, "{p:?}");
+        assert_eq!(p.len(), 5, "{p:?}");
+        assert!(p.contains(&"Add at least one domain focus.".to_string()));
     }
 
     #[tokio::test]
@@ -861,6 +916,11 @@ mod tests {
             levels: vec!["Lead".into()],
             excluded_titles: vec!["Director".into()],
             must_haves: vec!["Go".into()],
+            capabilities: vec!["Mentoring".into()],
+            domains: vec![
+                dom("custody", DomainWeight::Plus),
+                dom("Payments", DomainWeight::Must),
+            ],
             tools: vec![
                 BriefTool {
                     name: "OKTA".into(),
@@ -884,6 +944,19 @@ mod tests {
         assert_eq!(m.employer_types, ["Adtech"]);
         assert_eq!(m.tools[0].status, Some(ToolStatus::Required), "answer kept");
         assert_eq!(m.tools[1].status, None, "new tool still needs an answer");
+        assert_eq!(
+            m.capabilities,
+            ["Mentoring"],
+            "capabilities come from the new draft"
+        );
+        assert_eq!(
+            m.domains,
+            [
+                dom("custody", DomainWeight::Must),
+                dom("Payments", DomainWeight::Must)
+            ],
+            "Must or Plus kept for a domain still named; new ones as drafted"
+        );
     }
 
     #[test]
@@ -894,14 +967,31 @@ mod tests {
             name: " okta ".into(),
             status: None,
         });
+        l.capabilities = vec![" Mentoring ".into(), "mentoring".into()];
+        l.domains.push(dom(" custody ", DomainWeight::Plus));
+        l.domains.push(dom(" ", DomainWeight::Plus));
         let t = tidy(l).unwrap();
         assert_eq!(t.locations, ["Dubai"]);
         assert_eq!(t.tools.len(), 1);
+        assert_eq!(t.capabilities, ["Mentoring"]);
+        assert_eq!(
+            t.domains,
+            [dom("Custody", DomainWeight::Must)],
+            "first one wins"
+        );
         let mut long = ready();
         long.must_haves = vec!["x".repeat(121)];
         assert!(tidy(long).is_err());
         let mut many = ready();
         many.leave_out = vec!["a".into(); 21];
         assert!(tidy(many).is_err());
+        let mut many = ready();
+        many.domains = (0..21)
+            .map(|i| dom(&i.to_string(), DomainWeight::Plus))
+            .collect();
+        assert!(tidy(many).is_err());
+        let mut long = ready();
+        long.domains = vec![dom(&"x".repeat(121), DomainWeight::Plus)];
+        assert!(tidy(long).is_err());
     }
 }
