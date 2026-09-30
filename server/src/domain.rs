@@ -288,6 +288,100 @@ pub struct RoleUpdate {
     pub client_id: Option<uuid::Uuid>,
 }
 
+/// The search step for one role, as the Search screen shows it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct SearchState {
+    /// The confirmed brief searches use, if there is one.
+    pub brief_version: Option<i32>,
+    /// The confirmed lines that searches use.
+    pub lines: Option<BriefLines>,
+    /// Edits after confirming are not searched until confirmed.
+    pub unconfirmed_edits: bool,
+    /// The locations that will each be counted and pulled on their own.
+    pub locations: Vec<String>,
+    /// Why searching is not possible right now, in words for people.
+    pub blocked: Option<String>,
+    pub count: Option<CountView>,
+    pub pull: Option<PullView>,
+    /// Credits used by this organisation since the start of the month.
+    #[ts(type = "number")]
+    pub credits_this_month: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CountView {
+    pub id: uuid::Uuid,
+    pub brief_version: i32,
+    /// Seconds since 1970, for "counted 2 minutes ago".
+    #[ts(type = "number")]
+    pub counted_at: i64,
+    /// The brief has been confirmed again since, so this count is out of date.
+    pub stale: bool,
+    pub locations: Vec<CountLocation>,
+    pub credits_used: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CountLocation {
+    pub label: String,
+    #[ts(type = "number")]
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct PullView {
+    pub id: uuid::Uuid,
+    /// The count this pull came from. Each count is pulled from once.
+    pub count_id: uuid::Uuid,
+    pub requested: i32,
+    pub pulled: i32,
+    pub new_candidates: i32,
+    /// Found again: already a candidate for this role.
+    pub already: i32,
+    /// Removed after pulling: current job matched a locked-out company.
+    pub left_out: i32,
+    pub unknown_employer: i32,
+    pub credits_used: i32,
+    pub locations: i32,
+    pub locations_done: i32,
+    pub done: bool,
+    /// A location could not be pulled after several tries.
+    pub failed: bool,
+    /// Which locations failed, by name.
+    pub failed_locations: Vec<String>,
+    /// Credits paid for people who were never saved (a location failed after
+    /// the provider charged). Already counted in credits_used.
+    pub credits_unsaved: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CountRequest {
+    /// Made fresh by the browser for each press, so a repeat never pays twice.
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct PullPick {
+    pub location: String,
+    pub size: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct PullRequest {
+    pub count_id: uuid::Uuid,
+    pub picks: Vec<PullPick>,
+    /// Required when pulling more than 50 people at once.
+    pub confirmed: bool,
+    pub key: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::CandidacyState::*;

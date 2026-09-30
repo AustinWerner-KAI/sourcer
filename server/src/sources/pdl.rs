@@ -3,6 +3,8 @@
 
 use serde_json::{json, Value};
 
+use crate::employer::normalise_domain;
+
 use super::{
     read_json, text, ExperienceRecord, PeopleSource, PersonRecord, SearchPage, SearchQuery,
     SourceError,
@@ -20,6 +22,10 @@ pub struct PdlClient {
 impl PdlClient {
     pub fn new(api_key: Option<String>) -> Self {
         Self::with_base_url(api_key, DEFAULT_BASE_URL)
+    }
+
+    pub fn configured(&self) -> bool {
+        self.api_key.is_some()
     }
 
     pub fn with_base_url(api_key: Option<String>, base_url: &str) -> Self {
@@ -45,7 +51,7 @@ impl PeopleSource for PdlClient {
             .api_key
             .as_deref()
             .ok_or(SourceError::NotConfigured("People Data Labs"))?;
-        let mut body = json!({"sql": query.sql, "size": query.size.clamp(1, MAX_PAGE)});
+        let mut body = json!({"query": query.query, "size": query.size.clamp(1, MAX_PAGE)});
         if let Some(token) = &query.scroll_token {
             body["scroll_token"] = json!(token);
         }
@@ -57,6 +63,15 @@ impl PeopleSource for PdlClient {
             .send()
             .await
             .map_err(|e| SourceError::Network(e.without_url().to_string()))?;
+        // PDL answers "nothing matched" with 404, and does not charge for it.
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(SearchPage {
+                total: 0,
+                records: Vec::new(),
+                scroll_token: None,
+                credits_used: 0,
+            });
+        }
         parse_search(&read_json(res).await?)
     }
 }
@@ -78,7 +93,7 @@ pub fn parse_search(v: &Value) -> Result<SearchPage, SourceError> {
 
 fn parse_person(p: &Value) -> Option<PersonRecord> {
     let source_id = text(p, "id")?;
-    let experience = p
+    let experience: Vec<ExperienceRecord> = p
         .get("experience")
         .and_then(Value::as_array)
         .map(|xs| xs.iter().filter_map(parse_experience).collect())
@@ -91,8 +106,106 @@ fn parse_person(p: &Value) -> Option<PersonRecord> {
         current_employer_domain: text(p, "job_company_website"),
         location: text(p, "location_name"),
         linkedin_url: text(p, "linkedin_url"),
+        work_email: text(p, "work_email").and_then(|e| {
+            // Only an address at a company the person works or worked for.
+            let firms: Vec<String> = text(p, "job_company_website")
+                .into_iter()
+                .chain(
+                    experience
+                        .iter()
+                        .filter_map(|x: &ExperienceRecord| x.employer_domain.clone()),
+                )
+                .filter_map(|d: String| normalise_domain(&d))
+                .collect();
+            work_email(&e).filter(|e| {
+                let domain = e.rsplit('@').next().unwrap_or("");
+                firms
+                    .iter()
+                    .any(|f| domain == f || domain.ends_with(&format!(".{f}")))
+            })
+        }),
+        phones: phones(p),
         experience,
     })
+}
+
+/// Free email providers: an address there is personal, whatever field it is in.
+const PERSONAL_DOMAINS: &[&str] = &[
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "msn.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "gmx.com",
+    "mail.com",
+    "yandex.com",
+    "ymail.com",
+    "live.co.uk",
+    "pm.me",
+    "protonmail.ch",
+    "fastmail.com",
+    "btinternet.com",
+    "qq.com",
+    "163.com",
+    "mail.ru",
+    "web.de",
+    "comcast.net",
+];
+
+const PERSONAL_BRANDS: &[&str] = &[
+    "gmail",
+    "yahoo",
+    "hotmail",
+    "outlook",
+    "aol",
+    "gmx",
+    "yandex",
+    "live",
+    "icloud",
+    "protonmail",
+];
+
+/// A plausible work address, lower-cased; `None` for anything else, including
+/// addresses at free email providers. Personal emails are never kept (SRS N9).
+pub fn work_email(raw: &str) -> Option<String> {
+    let e = raw.trim().to_lowercase();
+    let (local, domain) = e.split_once('@')?;
+    let ok = !local.is_empty()
+        && domain.contains('.')
+        && !e.contains(char::is_whitespace)
+        && !PERSONAL_DOMAINS.contains(&domain)
+        // Country versions, such as yahoo.co.uk or hotmail.fr.
+        && !PERSONAL_BRANDS
+            .iter()
+            .any(|b| domain.starts_with(&format!("{b}.")));
+    ok.then_some(e)
+}
+
+/// Mobile first, then other numbers; at most three, no repeats.
+fn phones(p: &Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let listed = p
+        .get("phone_numbers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string));
+    for n in text(p, "mobile_phone").into_iter().chain(listed) {
+        let n = n.trim().to_string();
+        if n.chars().filter(char::is_ascii_digit).count() >= 7 && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out.truncate(3);
+    out
 }
 
 fn parse_experience(x: &Value) -> Option<ExperienceRecord> {
@@ -127,6 +240,11 @@ mod tests {
               "job_company_website": "examplepay.com",
               "location_name": true,
               "linkedin_url": "linkedin.com/in/alex-example",
+              "work_email": "Alex.Example@ExamplePay.com",
+              "personal_emails": ["alex.personal@gmail.com"],
+              "emails": [{"address": "alex.personal@gmail.com", "type": "personal"}],
+              "mobile_phone": "+1 212 555 0100",
+              "phone_numbers": ["+1 212 555 0100", "+1 646 555 0199"],
               "experience": [
                 {"company": {"name": "examplepay", "website": "examplepay.com"}, "title": {"name": "senior security engineer"}, "start_date": "2022-01", "end_date": null},
                 {"company": {"name": "samplebank"}, "title": {"name": "iam engineer"}, "start_date": "2018", "end_date": "2021-12"},
@@ -134,7 +252,8 @@ mod tests {
               ]
             },
             {"full_name": "no id, skipped"},
-            {"id": "pdl-2", "full_name": "sam sample", "job_title": true, "experience": true}
+            {"id": "pdl-2", "full_name": "sam sample", "job_title": true, "experience": true,
+             "work_email": true, "mobile_phone": true, "phone_numbers": true, "personal_emails": true}
           ]
         })
     }
@@ -159,9 +278,48 @@ mod tests {
         assert_eq!(a.experience.len(), 2, "entry without a company is dropped");
         assert_eq!(a.experience[1].end.as_deref(), Some("2021-12"));
 
+        assert_eq!(a.work_email.as_deref(), Some("alex.example@examplepay.com"));
+        let mut other = fixture();
+        other["data"][0]["work_email"] = json!("alex@some-other-firm.com");
+        let page = parse_search(&other).unwrap();
+        assert_eq!(
+            page.records[0].work_email, None,
+            "not at a company they work for"
+        );
+        assert_eq!(a.phones, ["+1 212 555 0100", "+1 646 555 0199"]);
+        let all = format!("{a:?}");
+        assert!(!all.contains("personal"), "personal emails are never read");
+
         let b = &page.records[1];
+        assert_eq!(
+            (b.work_email.as_deref(), b.phones.len()),
+            (None, 0),
+            "masked on free plans"
+        );
         assert_eq!(b.current_title, None);
         assert!(b.experience.is_empty());
+    }
+
+    #[test]
+    fn only_real_work_emails_are_kept() {
+        assert_eq!(work_email(" A@Firm.io ").as_deref(), Some("a@firm.io"));
+        assert_eq!(
+            work_email("a@mail.firm.com").as_deref(),
+            Some("a@mail.firm.com")
+        );
+        assert_eq!(work_email("a@me.firm.io").as_deref(), Some("a@me.firm.io"));
+        for bad in [
+            "someone@gmail.com",
+            "x@me.com",
+            "x@yahoo.co.uk",
+            "x@hotmail.fr",
+            "no-at-sign",
+            "a b@firm.io",
+            "@firm.io",
+            "a@firm",
+        ] {
+            assert_eq!(work_email(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -182,7 +340,7 @@ mod tests {
     fn estimate_is_clamped_to_one_page() {
         let c = PdlClient::new(None);
         let q = |size| SearchQuery {
-            sql: String::new(),
+            query: json!({}),
             size,
             scroll_token: None,
         };
@@ -195,7 +353,7 @@ mod tests {
     async fn no_key_means_no_call() {
         let c = PdlClient::with_base_url(None, "http://127.0.0.1:9");
         let q = SearchQuery {
-            sql: "SELECT * FROM person".into(),
+            query: json!({"match_all": {}}),
             size: 5,
             scroll_token: None,
         };
@@ -223,7 +381,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sends_key_sql_and_clamped_size() {
+    async fn sends_key_query_and_clamped_size() {
         let seen: Seen = Arc::default();
         let app = Router::new()
             .route("/v5/person/search", post(fake_pdl))
@@ -234,7 +392,7 @@ mod tests {
 
         let c = PdlClient::with_base_url(Some("test-key".into()), &format!("http://{addr}/"));
         let q = SearchQuery {
-            sql: "SELECT * FROM person".into(),
+            query: json!({"match_all": {}}),
             size: 500,
             scroll_token: Some("t1".into()),
         };
@@ -244,8 +402,35 @@ mod tests {
         let (key, body) = seen.lock().unwrap().clone().unwrap();
         assert_eq!(key, "test-key");
         assert_eq!(body["size"], 100);
-        assert_eq!(body["sql"], "SELECT * FROM person");
+        assert_eq!(body["query"], json!({"match_all": {}}));
         assert_eq!(body["scroll_token"], "t1");
+    }
+
+    #[tokio::test]
+    async fn no_match_is_empty_and_free() {
+        let app = Router::new().route(
+            "/v5/person/search",
+            post(|| async {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    "{\"error\": \"no records\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let c = PdlClient::with_base_url(Some("k".into()), &format!("http://{addr}"));
+        let q = SearchQuery {
+            query: json!({}),
+            size: 1,
+            scroll_token: None,
+        };
+        let page = c.search(&q).await.unwrap();
+        assert_eq!(
+            (page.total, page.records.len(), page.credits_used),
+            (0, 0, 0)
+        );
     }
 
     #[tokio::test]
@@ -260,7 +445,7 @@ mod tests {
 
         let c = PdlClient::with_base_url(Some("secret-key".into()), &format!("http://{addr}"));
         let q = SearchQuery {
-            sql: "x".into(),
+            query: json!({}),
             size: 1,
             scroll_token: None,
         };

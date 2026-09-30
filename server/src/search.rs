@@ -27,6 +27,9 @@ pub struct SearchRequest {
     pub query: SearchQuery,
     /// Same key = same search. A retried click or job reuses it.
     pub idempotency_key: String,
+    /// The pull this search belongs to, and its location label.
+    pub pull_id: Option<Uuid>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,6 +42,8 @@ pub enum SearchOutcome {
         new_candidates: usize,
         /// Records dropped because they work at the hiring or an off-limits client.
         left_out: usize,
+        /// New candidates with no known current employer, to check before contact.
+        unknown_employer: usize,
     },
     AlreadyRan {
         run_id: Uuid,
@@ -83,12 +88,18 @@ pub async fn run_search<S: PeopleSource>(
     let locked_out = employer::locked_out(pool, req.org_id, req.role_id).await?;
 
     let Some(run_id) = reserve_run(pool, req).await? else {
-        let run_id =
-            sqlx::query_scalar("SELECT id FROM run WHERE org_id = $1 AND idempotency_key = $2")
-                .bind(req.org_id)
-                .bind(&req.idempotency_key)
-                .fetch_one(pool)
-                .await?;
+        let (run_id, finished): (Uuid, bool) = sqlx::query_as(
+            "SELECT id, finished_at IS NOT NULL FROM run WHERE org_id = $1 AND idempotency_key = $2",
+        )
+        .bind(req.org_id)
+        .bind(&req.idempotency_key)
+        .fetch_one(pool)
+        .await?;
+        // An earlier try was charged but did not finish saving. Calling the
+        // provider again would charge twice, so report it as failed instead.
+        if !finished {
+            bail!("run {run_id} was charged but did not finish saving");
+        }
         return Ok(SearchOutcome::AlreadyRan { run_id });
     };
 
@@ -103,10 +114,18 @@ pub async fn run_search<S: PeopleSource>(
             return Err(e).context(format!("{} search failed", source.name()));
         }
     };
+    // Record the charge at once, so it counts even if saving fails below.
+    sqlx::query("UPDATE run SET records_pulled = $2, credits_used = $3 WHERE id = $1")
+        .bind(run_id)
+        .bind(page.records.len() as i32)
+        .bind(page.credits_used as i32)
+        .execute(pool)
+        .await?;
 
     let mut tx = pool.begin().await?;
     let mut new_candidates = 0;
     let mut left_out = 0;
+    let mut unknown_employer = 0;
     for record in &page.records {
         let current = std::iter::once((
             record.current_employer.as_deref().unwrap_or(""),
@@ -127,6 +146,7 @@ pub async fn run_search<S: PeopleSource>(
             left_out += 1;
             continue;
         }
+        save_contacts(&mut tx, req.org_id, person_id, record).await?;
         let inserted = sqlx::query(
             "INSERT INTO candidacy (org_id, person_id, role_id, brief_id, employer_unknown)
              VALUES ($1, $2, $3, $4, $5)
@@ -139,14 +159,25 @@ pub async fn run_search<S: PeopleSource>(
         .bind(verdict == Verdict::Unknown)
         .execute(&mut *tx)
         .await?;
-        new_candidates += inserted.rows_affected() as usize;
+        let added = inserted.rows_affected() as usize;
+        new_candidates += added;
+        if verdict == Verdict::Unknown {
+            unknown_employer += added;
+        }
     }
-    sqlx::query("UPDATE run SET records_pulled = $2, credits_used = $3 WHERE id = $1")
-        .bind(run_id)
-        .bind(page.records.len() as i32)
-        .bind(page.credits_used as i32)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE run SET records_pulled = $2, credits_used = $3, new_candidates = $4,
+                        left_out = $5, unknown_employer = $6, finished_at = now()
+         WHERE id = $1",
+    )
+    .bind(run_id)
+    .bind(page.records.len() as i32)
+    .bind(page.credits_used as i32)
+    .bind(new_candidates as i32)
+    .bind(left_out as i32)
+    .bind(unknown_employer as i32)
+    .execute(&mut *tx)
+    .await?;
     audit::record(
         &mut *tx,
         req.org_id,
@@ -164,14 +195,15 @@ pub async fn run_search<S: PeopleSource>(
         credits: page.credits_used,
         new_candidates,
         left_out,
+        unknown_employer,
     })
 }
 
 /// Insert the run row, or `None` if this idempotency key has already run.
 async fn reserve_run(pool: &PgPool, req: &SearchRequest) -> Result<Option<Uuid>> {
     let id = sqlx::query_scalar(
-        "INSERT INTO run (org_id, role_id, brief_id, queries, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO run (org_id, role_id, brief_id, queries, idempotency_key, pull_id, location)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (org_id, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -180,6 +212,8 @@ async fn reserve_run(pool: &PgPool, req: &SearchRequest) -> Result<Option<Uuid>>
     .bind(req.brief_id)
     .bind(serde_json::to_value(&req.query)?)
     .bind(&req.idempotency_key)
+    .bind(req.pull_id)
+    .bind(&req.location)
     .fetch_optional(pool)
     .await?;
     Ok(id)
@@ -275,6 +309,36 @@ async fn upsert_person(
     Ok(person_id)
 }
 
+/// Keep the work email and phone numbers the provider gave. Personal emails
+/// are never stored from a provider (SRS N9). A value already held for
+/// another person is left with them.
+async fn save_contacts(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: Uuid,
+    person_id: Uuid,
+    r: &PersonRecord,
+) -> Result<()> {
+    let found = r
+        .work_email
+        .iter()
+        .map(|e| ("work_email", e.to_lowercase()))
+        .chain(r.phones.iter().map(|p| ("phone", p.clone())));
+    for (kind, value) in found {
+        sqlx::query(
+            "INSERT INTO contact (org_id, person_id, kind, value, source)
+             VALUES ($1, $2, $3::contact_kind, $4, 'pdl')
+             ON CONFLICT (org_id, kind, value) DO NOTHING",
+        )
+        .bind(org_id)
+        .bind(person_id)
+        .bind(kind)
+        .bind(value)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
 /// "2021", "2021-03" or "2021-03-15" to a date (first of the month or year).
 fn to_date(s: &str) -> Option<chrono::NaiveDate> {
     let mut parts = s.split('-').map(|p| p.parse::<u32>().ok());
@@ -354,6 +418,8 @@ mod tests {
                 start: Some("2022-01".into()),
                 end: None,
             }],
+            work_email: None,
+            phones: vec![],
         }
     }
 
@@ -367,11 +433,13 @@ mod tests {
             role_id: role,
             brief_id: brief,
             query: SearchQuery {
-                sql: "SELECT * FROM person".into(),
+                query: serde_json::json!({"match_all": {}}),
                 size: 2,
                 scroll_token: None,
             },
             idempotency_key: format!("k-{}", Uuid::new_v4()),
+            pull_id: None,
+            location: None,
         };
         Some((pool, req))
     }
@@ -409,6 +477,7 @@ mod tests {
             .await
             .unwrap();
         let mut at_bank = person("p2", "linkedin.com/in/p-two");
+        at_bank.work_email = Some("p2@otherbank.com".into());
         at_bank.current_employer = Some("otherbank".into());
         at_bank.experience.clear();
         let mut by_domain = person("p3", "linkedin.com/in/p-three");
@@ -440,6 +509,7 @@ mod tests {
                 pulled: 6,
                 new_candidates: 2,
                 left_out: 4,
+                unknown_employer: 1,
                 ..
             }
         ));
@@ -459,6 +529,12 @@ mod tests {
             ],
             "only the Kraken person, and the unknown one flagged for a check"
         );
+        let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM contact WHERE org_id = $1")
+            .bind(req.org_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 0, "no contact details kept for locked-out people");
     }
 
     #[tokio::test]
@@ -512,10 +588,10 @@ mod tests {
         let Some((pool, req)) = setup().await else {
             return;
         };
-        let src = FakeSource::new(vec![
-            person("p1", "https://www.linkedin.com/in/p-one/"),
-            person("p2", "linkedin.com/in/p-two"),
-        ]);
+        let mut with_contacts = person("p1", "https://www.linkedin.com/in/p-one/");
+        with_contacts.work_email = Some("P1@ExamplePay.com".into());
+        with_contacts.phones = vec!["+971 50 000 0000".into()];
+        let src = FakeSource::new(vec![with_contacts, person("p2", "linkedin.com/in/p-two")]);
 
         let out = run_search(&pool, &src, &req).await.unwrap();
         let SearchOutcome::Ran {
@@ -578,6 +654,24 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(li, "linkedin.com/in/p-one", "stored normalised");
+        let contacts: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT kind::text AS k, value, source FROM contact WHERE org_id = $1 ORDER BY k DESC",
+        )
+        .bind(o)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contacts,
+            [
+                (
+                    "work_email".into(),
+                    "p1@examplepay.com".into(),
+                    "pdl".into()
+                ),
+                ("phone".into(), "+971 50 000 0000".into(), "pdl".into())
+            ]
+        );
     }
 
     #[tokio::test]
@@ -594,6 +688,30 @@ mod tests {
         };
         assert_eq!(second, SearchOutcome::AlreadyRan { run_id });
         assert_eq!(src.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_charged_run_that_did_not_finish_is_not_charged_again() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let src = FakeSource::new(vec![person("p1", "linkedin.com/in/p-one")]);
+        run_search(&pool, &src, &req).await.unwrap();
+        // As if the save had failed after the provider charged.
+        sqlx::query("UPDATE run SET finished_at = NULL WHERE idempotency_key = $1")
+            .bind(&req.idempotency_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(run_search(&pool, &src, &req).await.is_err());
+        assert_eq!(src.calls.load(Ordering::SeqCst), 1, "never charged twice");
+        let credits: i32 =
+            sqlx::query_scalar("SELECT credits_used FROM run WHERE idempotency_key = $1")
+                .bind(&req.idempotency_key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(credits, 1, "the charge is still counted");
     }
 
     #[tokio::test]

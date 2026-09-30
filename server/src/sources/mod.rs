@@ -23,6 +23,13 @@ pub struct PersonRecord {
     pub location: Option<String>,
     pub linkedin_url: Option<String>,
     pub experience: Vec<ExperienceRecord>,
+    /// Work email, when the plan unlocks it. Personal emails are never read
+    /// from a provider (SRS N9).
+    #[serde(default)]
+    pub work_email: Option<String>,
+    /// Phone numbers, when the plan unlocks them.
+    #[serde(default)]
+    pub phones: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,8 +45,9 @@ pub struct ExperienceRecord {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchQuery {
-    /// PDL's SQL form of a search, built from the confirmed brief.
-    pub sql: String,
+    /// The search as an Elasticsearch query, built from the confirmed brief
+    /// (see `plan`).
+    pub query: serde_json::Value,
     /// Records wanted, 1 to 100.
     pub size: u32,
     pub scroll_token: Option<String>,

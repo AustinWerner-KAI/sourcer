@@ -6,12 +6,19 @@ import { SignIn } from "./screens/SignIn";
 import { Team } from "./screens/Team";
 import { Briefs, NewRole } from "./screens/Briefs";
 import { BriefEditor } from "./screens/BriefEditor";
+import { Search } from "./screens/Search";
 import { useParams } from "react-router-dom";
 
 /** A fresh editor per role, so edits on one role never carry to another. */
 function BriefEditorPage() {
   const { id } = useParams();
   return <BriefEditor key={id} />;
+}
+
+/** A fresh search screen per role, so choices never carry to another role. */
+function SearchPage() {
+  const { id } = useParams();
+  return <Search key={id} />;
 }
 
 const screens = [
@@ -86,6 +93,7 @@ export function App() {
         <Route path="/brief" element={<Briefs />} />
         <Route path="/brief/new" element={<NewRole />} />
         <Route path="/brief/:id" element={<BriefEditorPage />} />
+        <Route path="/brief/:id/search" element={<SearchPage />} />
         <Route path="/team" element={isAdmin ? <Team me={me.data} /> : <Navigate to="/today" replace />} />
       </Routes>
     </div>
