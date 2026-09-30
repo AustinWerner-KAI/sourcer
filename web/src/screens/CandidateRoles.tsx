@@ -46,6 +46,25 @@ export function CandidateRoles() {
           </table>
         )}
       </section>
+      <section className="panel">
+        <h2 className="panel-title">Save LinkedIn profiles with the Chrome button</h2>
+        <p className="panel-note">
+          On someone's LinkedIn profile, click the Sourcer button, check the details and pick the role. They join that
+          role's list and get ranked. It reads only the page you are on, only when you click.
+        </p>
+        <ol className="steps-list">
+          <li>
+            In Chrome, open <code>chrome://extensions</code> and turn on Developer mode.
+          </li>
+          <li>
+            Click Load unpacked and choose the <code>sourcer/extension</code> folder.
+          </li>
+          <li>Pin the Sourcer button, open its Options and enter this Sourcer address:</li>
+        </ol>
+        <p className="addr">
+          <code>{window.location.origin}</code>
+        </p>
+      </section>
     </main>
   );
 }

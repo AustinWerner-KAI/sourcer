@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Sourcer: save LinkedIn profile",
+  "short_name": "Sourcer",
+  "description": "Save the LinkedIn profile you are viewing to a Sourcer role. Reads only the open page, only when you click.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Save to Sourcer",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"]
+}
