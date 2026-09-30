@@ -10,6 +10,7 @@
   --gold: #ffd100;
   --gold-soft: rgba(255, 209, 0, 0.12);
   --warn: #ff9b73;
+  --stop: #ff7a7a;
   --font: "Space Grotesk", system-ui, sans-serif;
   --display: "Unbounded", "Space Grotesk", sans-serif;
   --radius: 10px;
@@ -237,13 +238,15 @@ ul.joblist { list-style: none; margin: 14px 0 0; padding: 0; }
 .rankstate strong { color: var(--text); font-weight: 500; }
 .rankstate .link-button { margin: 0; }
 .rankstate .jobsearch { margin-top: 4px; }
-.rcline { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.rcline { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.rcline .rcadd { grid-column: 2; }
 .rcflags { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
 .rcflags .link-button { margin: 0; padding: 6px 0; }
 .rcwhen { font-size: 12px; color: var(--muted); }
-.rcline .confirm { width: 100%; margin-top: 0; }
-.rcline .form-error, .panel .rcline .form-error { width: 100%; margin: 0; }
+.rcline .confirm { grid-column: 1 / -1; margin-top: 0; }
+.rcline .form-error, .panel .rcline .form-error { grid-column: 1 / -1; margin: 0; }
 .flag.rc { background: rgba(255, 255, 255, 0.06); color: var(--text-2); }
+.flag.stop { background: rgba(255, 92, 92, 0.16); color: var(--stop); border: 1px solid rgba(255, 92, 92, 0.45); }
 .flag.sent { background: var(--gold-soft); color: var(--gold); }
 .ok-text { font-size: 14px; color: var(--text-2); }
 .stat .v { overflow-wrap: anywhere; }
@@ -267,4 +270,7 @@ ul.joblist { list-style: none; margin: 14px 0 0; padding: 0; }
   .cand { grid-template-columns: 40px 1fr; }
   .acts { grid-column: 2 / -1; flex-direction: row; flex-wrap: wrap; min-width: 0; }
   .reasons { grid-column: 1 / -1; }
+  .row2 { grid-template-columns: 1fr; }
+  .rcline { grid-template-columns: 1fr; }
+  .rcline .rcadd { grid-column: 1; justify-self: start; }
 }

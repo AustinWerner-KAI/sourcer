@@ -198,7 +198,7 @@ function Person({
         <div className="who">
           <span className="nm">{p.name}</span>
           {where && <span className="ti">{where}</span>}
-          {p.do_not_contact && <span className="flag known">Do not contact</span>}
+          {p.do_not_contact && <span className="flag stop">Do not contact</span>}
           {p.known && <span className="flag known">{p.known}</span>}
           {p.employer_unknown && <span className="flag emp">Check employer</span>}
           {tab === "rejected" && p.reject_reason && (
@@ -311,6 +311,7 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
   const busy = check.isPending || add.isPending;
   const target = job ? `${jobRef(job)} in Recruitly` : "Recruitly";
 
+  // Three levels: stop (never add), check (look first) and clear.
   let flag: ReactNode;
   if (p.sent_to_recruitly) {
     flag = (
@@ -319,35 +320,35 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
         {p.in_recruitly_pipeline ? ` · in ${jobRef(job)}` : ""}
       </span>
     );
-  } else if (p.recruitly_check_failed || !p.recruitly_checked) {
+  } else if (p.do_not_contact) {
+    flag = <span className="flag stop">Do not contact. Can't be added to Recruitly.</span>;
+  } else if (p.recruitly_check_failed) {
+    flag = <span className="flag emp">Check failed: Recruitly didn't answer</span>;
+  } else if (!p.recruitly_checked) {
     flag = <span className="flag emp">Not checked in Recruitly</span>;
   } else if (p.recruitly_note) {
-    const sure = p.recruitly_note.startsWith("In Recruitly");
-    flag = <span className={`flag ${sure ? "known" : "emp"}`}>{p.recruitly_note}</span>;
+    const clear = p.recruitly_note.startsWith("In Recruitly") && !p.recruitly_note.includes("owned by");
+    flag = <span className={`flag ${clear ? "rc" : "emp"}`}>{p.recruitly_note}</span>;
   } else {
     flag = <span className="flag rc">Not in Recruitly</span>;
   }
+  const open = !p.sent_to_recruitly && !p.do_not_contact;
 
   return (
     <div className="rcline">
       <div className="rcflags">
         {flag}
-        {p.recruitly_checked_at && !p.recruitly_check_failed && !p.sent_to_recruitly && (
+        {p.recruitly_checked_at && !p.recruitly_check_failed && open && (
           <span className="rcwhen">Checked {ago(p.recruitly_checked_at)}</span>
         )}
-        {!p.sent_to_recruitly && (
+        {open && (
           <button type="button" className="link-button" onClick={() => check.mutate()} disabled={busy}>
             {check.isPending ? "Checking" : p.recruitly_checked ? "Check again" : "Check now"}
           </button>
         )}
       </div>
-      {!p.sent_to_recruitly && !confirm && (
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => add.mutate(yes)}
-          disabled={busy || p.do_not_contact}
-        >
+      {open && !confirm && (
+        <button type="button" className="btn-ghost rcadd" onClick={() => add.mutate(yes)} disabled={busy}>
           {add.isPending ? "Adding" : `Add to ${target}`}
         </button>
       )}
