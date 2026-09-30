@@ -12,6 +12,10 @@ import type { RoleSummary } from "./types/RoleSummary";
 import type { RoleUpdate } from "./types/RoleUpdate";
 import type { PullRequest } from "./types/PullRequest";
 import type { SearchState } from "./types/SearchState";
+import type { CandidateRow } from "./types/CandidateRow";
+import type { CandidateTab } from "./types/CandidateTab";
+import type { CandidatesView } from "./types/CandidatesView";
+import type { Decision } from "./types/Decision";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -79,6 +83,11 @@ export const api = {
   /** `key` is fresh per press, so a repeated request never pays twice. */
   countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
   pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
+
+  candidates: (id: string, tab: CandidateTab) => get<CandidatesView>(`/api/roles/${id}/candidates?tab=${tab}`),
+  rankNow: (id: string) => send<CandidatesView>("POST", `/api/roles/${id}/candidates/rank`, {}),
+  /** `version` is the one the screen showed, so two people cannot overwrite each other. */
+  decide: (candidacy: string, d: Decision) => send<CandidateRow>("POST", `/api/candidates/${candidacy}/decide`, d),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {
