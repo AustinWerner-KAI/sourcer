@@ -11,6 +11,7 @@ pub mod db;
 pub mod domain;
 pub mod employer;
 pub mod jobs;
+pub mod people;
 pub mod plan;
 pub mod policy;
 pub mod ratelimit;

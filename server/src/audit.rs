@@ -26,6 +26,8 @@ pub mod action {
     pub const CANDIDATE_SHORTLISTED: &str = "candidate.shortlist";
     pub const CANDIDATE_REJECTED: &str = "candidate.reject";
     pub const CANDIDATE_RECONSIDERED: &str = "candidate.reconsider";
+    pub const PROFILE_SAVED: &str = "person.save_linkedin";
+    pub const PEOPLE_MERGED: &str = "person.merge";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.
