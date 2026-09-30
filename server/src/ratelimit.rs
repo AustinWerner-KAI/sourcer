@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    hash::Hash,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Mutex,
     time::{Duration, Instant},
@@ -28,13 +29,14 @@ pub const SIGN_IN_PER_MINUTE: u32 = 30;
 /// still full, new addresses are let through untracked rather than locked out.
 const MAX_TRACKED: usize = 10_000;
 
-pub struct RateLimiter {
+/// Counts attempts per key (a network address, or a user id).
+pub struct RateLimiter<K = IpAddr> {
     max: u32,
     window: Duration,
-    hits: Mutex<HashMap<IpAddr, (Instant, u32)>>,
+    hits: Mutex<HashMap<K, (Instant, u32)>>,
 }
 
-impl RateLimiter {
+impl<K: Eq + Hash> RateLimiter<K> {
     pub fn new(max: u32, window: Duration) -> Self {
         Self {
             max,
@@ -43,17 +45,17 @@ impl RateLimiter {
         }
     }
 
-    /// Count one attempt from `ip`. False once the limit for this window is used.
-    pub fn allow(&self, ip: IpAddr) -> bool {
+    /// Count one attempt for `key`. False once the limit for this window is used.
+    pub fn allow(&self, key: K) -> bool {
         let now = Instant::now();
         let mut hits = self.hits.lock().unwrap_or_else(|e| e.into_inner());
-        if hits.len() >= MAX_TRACKED && !hits.contains_key(&ip) {
+        if hits.len() >= MAX_TRACKED && !hits.contains_key(&key) {
             hits.retain(|_, (start, _)| now.duration_since(*start) < self.window);
             if hits.len() >= MAX_TRACKED {
                 return true;
             }
         }
-        let entry = hits.entry(ip).or_insert((now, 0));
+        let entry = hits.entry(key).or_insert((now, 0));
         if now.duration_since(entry.0) >= self.window {
             *entry = (now, 0);
         }

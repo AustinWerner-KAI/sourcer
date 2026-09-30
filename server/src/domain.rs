@@ -132,11 +132,160 @@ pub struct NewMember {
     pub role: Role,
 }
 
+/// Confirm exactly these lines. `based_on` is the version the editor loaded
+/// (`None` if there was no brief), so a stale window cannot overwrite newer work.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct ConfirmBrief {
+    pub lines: BriefLines,
+    pub based_on: Option<i32>,
+}
+
 /// Switch a team member off or back on.
 #[derive(Debug, Clone, Deserialize, TS)]
 #[ts(export, export_to = "../../web/src/api/types/")]
 pub struct MemberUpdate {
     pub disabled: bool,
+}
+
+/// How the client treats a tool named in the spec. Never assumed: the
+/// resourcer answers for each tool before a search runs (SRS F4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum ToolStatus {
+    Required,
+    Nice,
+    Replacing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct BriefTool {
+    pub name: String,
+    /// `None` until the resourcer answers.
+    pub status: Option<ToolStatus>,
+}
+
+/// How much a domain counts. `Must` narrows the search; `Plus` only lifts
+/// the ranking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum DomainWeight {
+    Must,
+    Plus,
+}
+
+/// An area of the business the person should know, e.g. "Digital asset custody".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct BriefDomain {
+    pub name: String,
+    pub weight: DomainWeight,
+}
+
+/// The brief check (SRS F3), as the resourcer edits it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct BriefLines {
+    /// 1. Seniority titles to search, e.g. "Senior", "Lead", "Principal".
+    pub levels: Vec<String>,
+    /// Titles never searched, e.g. "Director", "VP".
+    pub excluded_titles: Vec<String>,
+    /// 2. Up to three, most important first.
+    pub must_haves: Vec<String>,
+    /// 3. Functional and soft skills. Used to rank and explain, never to filter.
+    pub capabilities: Vec<String>,
+    /// 4. Areas of the business the person should know.
+    pub domains: Vec<BriefDomain>,
+    /// 5. Every tool the spec names.
+    pub tools: Vec<BriefTool>,
+    /// 6. Cities, and whether remote counts.
+    pub locations: Vec<String>,
+    pub remote: bool,
+    /// 7. Kinds of employer to search, and companies to leave out.
+    pub employer_types: Vec<String>,
+    pub leave_out: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Brief {
+    pub id: uuid::Uuid,
+    pub version: i32,
+    pub lines: BriefLines,
+    pub drafted_by_ai: bool,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Client {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub domain: Option<String>,
+    /// Never approach their staff for any role.
+    pub off_limits: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct NewClient {
+    pub name: String,
+    /// The client's web domain, e.g. "example.com". Used to keep their staff out.
+    pub domain: String,
+    pub off_limits: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RoleSummary {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub client_name: Option<String>,
+    /// "none", "draft" or "confirmed".
+    pub brief_state: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RoleDetail {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub client: Option<Client>,
+    pub spec_text: String,
+    /// The latest version: the open draft if there is one, else the last confirmed.
+    pub brief: Option<Brief>,
+    /// Companies whose staff are always left out of this role: the hiring
+    /// client and every off-limits client. Cannot be removed.
+    pub locked_out: Vec<LockedOut>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct LockedOut {
+    pub id: uuid::Uuid,
+    pub name: String,
+    /// The client this role is for, rather than an off-limits client.
+    pub hiring: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct NewRole {
+    pub client_id: uuid::Uuid,
+    pub title: String,
+    pub spec_text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RoleUpdate {
+    pub title: String,
+    pub spec_text: String,
+    /// Set the client, only while the role has none. `None` leaves it as it is.
+    pub client_id: Option<uuid::Uuid>,
 }
 
 #[cfg(test)]

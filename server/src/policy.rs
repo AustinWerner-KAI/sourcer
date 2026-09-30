@@ -7,6 +7,9 @@ use crate::domain::Channel;
 #[derive(Debug, Clone, Copy)]
 pub struct SendCheck {
     pub channel: Channel,
+    /// The person currently works at the client this role is for, or at an
+    /// off-limits client. Never contacted, whatever else is true.
+    pub works_at_hiring_client: bool,
     pub person_opted_out: bool,
     pub on_do_not_contact_list: bool,
     pub org_sending_paused: bool,
@@ -22,6 +25,7 @@ pub struct SendCheck {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Blocked {
+    WorksAtHiringClient,
     OptedOut,
     DoNotContact,
     SendingPaused,
@@ -31,6 +35,9 @@ pub enum Blocked {
 }
 
 pub fn may_send(c: SendCheck) -> Result<(), Blocked> {
+    if c.works_at_hiring_client {
+        return Err(Blocked::WorksAtHiringClient);
+    }
     if c.person_opted_out {
         return Err(Blocked::OptedOut);
     }
@@ -69,6 +76,7 @@ mod tests {
     fn ok() -> SendCheck {
         SendCheck {
             channel: Channel::Email,
+            works_at_hiring_client: false,
             person_opted_out: false,
             on_do_not_contact_list: false,
             org_sending_paused: false,
@@ -100,6 +108,20 @@ mod tests {
             }),
             Err(Blocked::DoNotContact)
         );
+    }
+
+    #[test]
+    fn never_contact_the_hiring_clients_staff() {
+        for channel in [Channel::Email, Channel::Linkedin, Channel::Whatsapp] {
+            assert_eq!(
+                may_send(SendCheck {
+                    channel,
+                    works_at_hiring_client: true,
+                    ..ok()
+                }),
+                Err(Blocked::WorksAtHiringClient)
+            );
+        }
     }
 
     #[test]

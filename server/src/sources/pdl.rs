@@ -88,6 +88,7 @@ fn parse_person(p: &Value) -> Option<PersonRecord> {
         full_name: text(p, "full_name").unwrap_or_default(),
         current_title: text(p, "job_title"),
         current_employer: text(p, "job_company_name"),
+        current_employer_domain: text(p, "job_company_website"),
         location: text(p, "location_name"),
         linkedin_url: text(p, "linkedin_url"),
         experience,
@@ -98,6 +99,7 @@ fn parse_experience(x: &Value) -> Option<ExperienceRecord> {
     let employer = x.get("company").and_then(|c| text(c, "name"))?;
     Some(ExperienceRecord {
         employer,
+        employer_domain: x.get("company").and_then(|c| text(c, "website")),
         title: x.get("title").and_then(|t| text(t, "name")),
         start: text(x, "start_date"),
         end: text(x, "end_date"),
@@ -122,10 +124,11 @@ mod tests {
               "full_name": "alex example",
               "job_title": "senior security engineer",
               "job_company_name": "examplepay",
+              "job_company_website": "examplepay.com",
               "location_name": true,
               "linkedin_url": "linkedin.com/in/alex-example",
               "experience": [
-                {"company": {"name": "examplepay"}, "title": {"name": "senior security engineer"}, "start_date": "2022-01", "end_date": null},
+                {"company": {"name": "examplepay", "website": "examplepay.com"}, "title": {"name": "senior security engineer"}, "start_date": "2022-01", "end_date": null},
                 {"company": {"name": "samplebank"}, "title": {"name": "iam engineer"}, "start_date": "2018", "end_date": "2021-12"},
                 {"company": null, "title": {"name": "contractor"}}
               ]
@@ -147,6 +150,11 @@ mod tests {
         let a = &page.records[0];
         assert_eq!(a.source_id, "pdl-1");
         assert_eq!(a.current_employer.as_deref(), Some("examplepay"));
+        assert_eq!(a.current_employer_domain.as_deref(), Some("examplepay.com"));
+        assert_eq!(
+            a.experience[0].employer_domain.as_deref(),
+            Some("examplepay.com")
+        );
         assert_eq!(a.location, None, "masked on the free tier");
         assert_eq!(a.experience.len(), 2, "entry without a company is dropped");
         assert_eq!(a.experience[1].end.as_deref(), Some("2021-12"));

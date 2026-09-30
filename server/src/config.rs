@@ -22,6 +22,10 @@ pub struct Config {
     pub public_url: String,
     /// Made admin on their first sign-in.
     pub admin_email: Option<String>,
+    /// Anthropic, for drafting briefs (D8). Drafting is off until this is set.
+    pub anthropic_api_key: Option<String>,
+    /// Optional override of the Claude model.
+    pub anthropic_model: Option<String>,
 }
 
 impl std::fmt::Debug for Config {
@@ -38,6 +42,8 @@ impl std::fmt::Debug for Config {
             .field("m365_client_secret", &set(&self.m365_client_secret))
             .field("public_url", &self.public_url)
             .field("admin_email", &self.admin_email)
+            .field("anthropic_api_key", &set(&self.anthropic_api_key))
+            .field("anthropic_model", &self.anthropic_model)
             .finish()
     }
 }
@@ -61,6 +67,8 @@ impl Config {
             public_url: std::env::var("PUBLIC_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
             admin_email: secret("ADMIN_EMAIL"),
+            anthropic_api_key: secret("ANTHROPIC_API_KEY"),
+            anthropic_model: secret("ANTHROPIC_MODEL"),
         };
         config.validate()?;
         Ok(config)
@@ -114,9 +122,16 @@ mod tests {
             m365_client_secret: Some("ms-secret".into()),
             public_url: "http://localhost:8080".into(),
             admin_email: None,
+            anthropic_api_key: Some("sk-ant-secret".into()),
+            anthropic_model: None,
         };
         let out = format!("{c:?}");
-        assert!(!out.contains("pw") && !out.contains("pdl-secret") && !out.contains("ms-secret"));
+        assert!(
+            !out.contains("pw")
+                && !out.contains("pdl-secret")
+                && !out.contains("ms-secret")
+                && !out.contains("sk-ant-secret")
+        );
         assert!(out.contains("<set>") && out.contains("<unset>"));
         assert!(c.auth().is_some());
         let incomplete = Config {
@@ -142,6 +157,8 @@ mod tests {
             m365_client_secret: None,
             public_url: "http://localhost:8080".into(),
             admin_email: None,
+            anthropic_api_key: None,
+            anthropic_model: None,
         };
         assert!(base.validate().is_ok());
         for bad in [
