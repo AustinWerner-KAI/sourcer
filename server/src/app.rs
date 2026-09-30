@@ -921,6 +921,8 @@ mod tests {
         json!({
             "levels": ["Senior", "Lead"], "excluded_titles": ["Director"],
             "must_haves": ["Cloud security", "IAM"],
+            "capabilities": ["Stakeholder management"],
+            "domains": [{"name": "Privileged access", "weight": "must"}],
             "tools": [{"name": "CyberArk", "status": tool_status}],
             "locations": ["Dubai"], "remote": false,
             "employer_types": ["Trading firms"], "leave_out": []
@@ -983,7 +985,32 @@ mod tests {
             json_req("PUT", &format!("{uri}/brief"), &me, lines(None)),
         )
         .await;
-        assert_eq!(json_body(res).await["brief"]["confirmed"], false);
+        let saved = json_body(res).await;
+        assert_eq!(saved["brief"]["confirmed"], false);
+        assert_eq!(
+            (
+                &saved["brief"]["lines"]["capabilities"],
+                &saved["brief"]["lines"]["domains"]
+            ),
+            (
+                &json!(["Stakeholder management"]),
+                &json!([{"name": "Privileged access", "weight": "must"}])
+            ),
+            "capabilities and domains are stored"
+        );
+        let mut no_domain = lines(Some("required"));
+        no_domain["domains"] = json!([]);
+        let res = send(
+            &app,
+            json_req(
+                "POST",
+                &confirm,
+                &me,
+                json!({"lines": no_domain, "based_on": 1}),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "a domain is needed");
         let res = send(
             &app,
             json_req("POST", &confirm, &me, confirming(None, Some(1))),
