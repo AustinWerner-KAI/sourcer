@@ -39,7 +39,7 @@ Team size is still to confirm (see open decisions).
 | F7 | Known check: flag anyone the team has contacted, placed or blocked. Runs live on every list; known people are flagged, not hidden, and the resourcer decides. Do-not-contact people cannot be shortlisted | Must | M1 |
 | F8 | Honour the client off-limits list: never surface their staff | Must | M1 |
 | F9 | Shortlist or reject with a reason code (FIT, SENIOR, JUNIOR, FUNCTION, SKILL, LOCATION, EMPLOYER, KNOWN) | Must | M1 |
-| F10 | Save a LinkedIn profile the resourcer is viewing, via a browser extension (no automation) | Must | M1 |
+| F10 | Save a LinkedIn profile the resourcer is viewing, via a Chrome button (extension) that reads only the open page, only on click (no automation). The resourcer checks the details and picks the role; locked-out staff are refused | Must | M1 |
 | F11 | Work email and phone: taken from People Data Labs when pulled (paid plan; only an address at the person's own employer), Apollo for shortlisted people otherwise. Personal emails are never taken from a provider | Must | M2 |
 | F12 | Draft outreach in the resourcer's voice for email, InMail and WhatsApp | Must | M2 |
 | F13 | Approve one person's whole sequence (first message plus follow-ups) once | Must | M2 |
@@ -149,6 +149,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 30 Sep 2026 | F10: LinkedIn save button built as a Chrome extension (Kai: Chrome, save straight to a role). Recruitly is the CRM/ATS for the known check and handover (D10, to plan) |
 | 30 Sep 2026 | F6, F7, F9: Candidates screen built. Ranking runs after each pull; known people are flagged, not hidden (Kai). LinkedIn save button (F10) moves to the next sprint |
 | 30 Sep 2026 | F5: search step built (count, then pull). F11: PDL work email and phone are saved when pulled; personal emails never (Kai) |
 | 30 Sep 2026 | F3: brief gains Capabilities (functional and soft skills, ranking only) and Domain focus (Must narrows the search, Plus only ranks). The hiring client and off-limits clients are always left out. D8 decided: Claude |

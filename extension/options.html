@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sourcer settings</title>
+    <link rel="stylesheet" href="shared.css" />
+  </head>
+  <body>
+    <div class="brand">AUSTIN WERNER</div>
+    <div class="sub">Sourcer · settings</div>
+    <form id="form">
+      <label for="origin">Sourcer address</label>
+      <input class="in" id="origin" placeholder="http://sourcer-office:8080" required />
+      <button class="btn" type="submit">Save</button>
+      <p class="note">The address you open Sourcer at. Chrome asks once to let this button talk to it.</p>
+    </form>
+    <div id="result" class="msg" role="status" hidden></div>
+    <script src="options.js"></script>
+  </body>
+</html>
