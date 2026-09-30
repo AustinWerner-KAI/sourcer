@@ -227,17 +227,28 @@ async fn upsert_person(
     r: &PersonRecord,
 ) -> Result<Uuid> {
     let linkedin = r.linkedin_url.as_deref().map(normalise_identifier);
-    let existing: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM person
-         WHERE org_id = $1 AND (pdl_id = $2 OR linkedin_url = $3)
-         ORDER BY (pdl_id = $2) DESC NULLS LAST
-         LIMIT 1",
-    )
-    .bind(org_id)
-    .bind(&r.source_id)
-    .bind(&linkedin)
-    .fetch_optional(&mut **tx)
-    .await?;
+    let by_pdl: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM person WHERE org_id = $1 AND pdl_id = $2")
+            .bind(org_id)
+            .bind(&r.source_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let by_linkedin: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM person WHERE org_id = $1 AND linkedin_url = $2")
+            .bind(org_id)
+            .bind(&linkedin)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let existing = match (by_pdl, by_linkedin) {
+        // Found once by a search and once from LinkedIn: the same person, so
+        // one record, or they could be approached twice for one role.
+        (Some(pdl), Some(li)) if pdl != li => {
+            merge_people(tx, org_id, li, pdl).await?;
+            Some(li)
+        }
+        (Some(id), _) | (None, Some(id)) => Some(id),
+        (None, None) => None,
+    };
 
     let person_id = match existing {
         Some(id) => {
@@ -310,6 +321,70 @@ async fn upsert_person(
         }
     }
     Ok(person_id)
+}
+
+/// Fold `drop` into `keep` (same org). Where both are on the same role, the
+/// candidacy further along is kept, so no decision or outreach is lost.
+async fn merge_people(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: Uuid,
+    keep: Uuid,
+    drop: Uuid,
+) -> Result<()> {
+    let progress = |alias: &str| {
+        format!(
+            "array_position(ARRAY['found', 'known_checked', 'ranked', 'rejected', 'shortlisted',
+             'drafted', 'approved', 'contacted', 'no_reply', 'replied', 'handed_to_ats']::candidacy_state[],
+             {alias}.state)"
+        )
+    };
+    // Of each pair on the same role, remove the one less far along.
+    sqlx::query(&format!(
+        "DELETE FROM candidacy c USING candidacy k, candidacy d
+         WHERE k.person_id = $1 AND d.person_id = $2 AND k.role_id = d.role_id
+           AND c.id = CASE WHEN {} > {} THEN k.id ELSE d.id END",
+        progress("d"),
+        progress("k")
+    ))
+    .bind(keep)
+    .bind(drop)
+    .execute(&mut **tx)
+    .await?;
+    for table in ["candidacy", "contact", "touch"] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET person_id = $1 WHERE person_id = $2 AND org_id = $3"
+        ))
+        .bind(keep)
+        .bind(drop)
+        .bind(org_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    // An opt-out on either record stays an opt-out.
+    let (pdl_id, opted_out): (Option<String>, bool) = sqlx::query_as(
+        "DELETE FROM person WHERE id = $1 AND org_id = $2 RETURNING pdl_id, opted_out",
+    )
+    .bind(drop)
+    .bind(org_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query(
+        "UPDATE person SET pdl_id = COALESCE(pdl_id, $2), opted_out = opted_out OR $3 WHERE id = $1",
+    )
+    .bind(keep)
+    .bind(pdl_id)
+    .bind(opted_out)
+    .execute(&mut **tx)
+    .await?;
+    audit::record(
+        &mut **tx,
+        org_id,
+        None,
+        audit::action::PEOPLE_MERGED,
+        &format!("person:{keep} merged:{drop}"),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Keep the work email and phone numbers the provider gave. Personal emails
@@ -748,6 +823,94 @@ mod tests {
         );
         assert_eq!(
             count(&pool, "SELECT count(*) FROM candidacy WHERE org_id = $1", o).await,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_saved_from_linkedin_and_found_by_a_search_becomes_one_record() {
+        let Some((pool, req)) = setup().await else {
+            return;
+        };
+        let o = req.org_id;
+        // Saved from LinkedIn and shortlisted, with no PDL id.
+        let saved: Uuid = sqlx::query_scalar(
+            "INSERT INTO person (org_id, linkedin_url, full_name) VALUES ($1, 'linkedin.com/in/jane', 'Jane') RETURNING id",
+        )
+        .bind(o)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id, state) VALUES ($1, $2, $3, $4, 'shortlisted')",
+        )
+        .bind(o)
+        .bind(saved)
+        .bind(req.role_id)
+        .bind(req.brief_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A search finds her without a LinkedIn address, so she looks new.
+        let mut jane = person("p1", "linkedin.com/in/jane");
+        jane.current_employer = Some("Kraken".into());
+        jane.linkedin_url = None;
+        jane.phones = vec!["+971 50 111 1111".into()];
+        run_search(&pool, &FakeSource::new(vec![jane.clone()]), &req)
+            .await
+            .unwrap();
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM person WHERE org_id = $1", o).await,
+            2
+        );
+        // A later search returns her LinkedIn address: the two are merged.
+        jane.linkedin_url = Some("https://www.linkedin.com/in/jane/".into());
+        let again = SearchRequest {
+            idempotency_key: format!("k-{}", Uuid::new_v4()),
+            ..req.clone()
+        };
+        run_search(&pool, &FakeSource::new(vec![jane]), &again)
+            .await
+            .unwrap();
+        let people: Vec<(Uuid, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, pdl_id, linkedin_url FROM person WHERE org_id = $1")
+                .bind(o)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            people,
+            [(
+                saved,
+                Some("p1".into()),
+                Some("linkedin.com/in/jane".into())
+            )]
+        );
+        let states: Vec<String> = sqlx::query_scalar(
+            "SELECT state::text FROM candidacy WHERE org_id = $1 AND role_id = $2",
+        )
+        .bind(o)
+        .bind(req.role_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            states,
+            ["shortlisted"],
+            "one candidacy, the one further along"
+        );
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM contact WHERE org_id = $1", o).await,
+            1,
+            "contact details moved over"
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'person.merge'",
+                o
+            )
+            .await,
             1
         );
     }

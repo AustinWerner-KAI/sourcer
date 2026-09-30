@@ -414,7 +414,11 @@ async fn rows_for_role(
     Ok(rows.into_iter().map(CandidateRow::from).collect())
 }
 
-async fn one_row(pool: &PgPool, org_id: Uuid, candidacy: Uuid) -> anyhow::Result<CandidateRow> {
+pub(crate) async fn one_row(
+    pool: &PgPool,
+    org_id: Uuid,
+    candidacy: Uuid,
+) -> anyhow::Result<CandidateRow> {
     let sql = ROW_SELECT
         .replace("{filter}", "c.id = $2")
         .replace("{order}", "c.id");
