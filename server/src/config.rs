@@ -26,6 +26,10 @@ pub struct Config {
     pub anthropic_api_key: Option<String>,
     /// Optional override of the Claude model.
     pub anthropic_model: Option<String>,
+    /// Recruitly, the team's CRM and ATS (D10). Off until this is set.
+    pub recruitly_api_key: Option<String>,
+    /// Most Recruitly calls per day. Defaults below the plan's limit.
+    pub recruitly_daily_cap: Option<i64>,
 }
 
 impl std::fmt::Debug for Config {
@@ -44,6 +48,8 @@ impl std::fmt::Debug for Config {
             .field("admin_email", &self.admin_email)
             .field("anthropic_api_key", &set(&self.anthropic_api_key))
             .field("anthropic_model", &self.anthropic_model)
+            .field("recruitly_api_key", &set(&self.recruitly_api_key))
+            .field("recruitly_daily_cap", &self.recruitly_daily_cap)
             .finish()
     }
 }
@@ -69,6 +75,15 @@ impl Config {
             admin_email: secret("ADMIN_EMAIL"),
             anthropic_api_key: secret("ANTHROPIC_API_KEY"),
             anthropic_model: secret("ANTHROPIC_MODEL"),
+            recruitly_api_key: secret("RECRUITLY_API_KEY"),
+            recruitly_daily_cap: match secret("RECRUITLY_DAILY_CAP") {
+                Some(v) => Some(
+                    v.trim()
+                        .parse()
+                        .context("RECRUITLY_DAILY_CAP must be a whole number")?,
+                ),
+                None => None,
+            },
         };
         config.validate()?;
         Ok(config)
@@ -124,6 +139,8 @@ mod tests {
             admin_email: None,
             anthropic_api_key: Some("sk-ant-secret".into()),
             anthropic_model: None,
+            recruitly_api_key: Some("rc-secret".into()),
+            recruitly_daily_cap: None,
         };
         let out = format!("{c:?}");
         assert!(
@@ -131,6 +148,7 @@ mod tests {
                 && !out.contains("pdl-secret")
                 && !out.contains("ms-secret")
                 && !out.contains("sk-ant-secret")
+                && !out.contains("rc-secret")
         );
         assert!(out.contains("<set>") && out.contains("<unset>"));
         assert!(c.auth().is_some());
@@ -159,6 +177,8 @@ mod tests {
             admin_email: None,
             anthropic_api_key: None,
             anthropic_model: None,
+            recruitly_api_key: None,
+            recruitly_daily_cap: None,
         };
         assert!(base.validate().is_ok());
         for bad in [

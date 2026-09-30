@@ -16,10 +16,11 @@ use crate::{
     ai::Claude,
     auth,
     auth::AuthConfig,
-    candidates,
+    candidates, crm,
     domain::Health,
     people,
     ratelimit::{self, RateLimiter},
+    recruitly::Recruitly,
     roles, searching,
     sources::pdl::PdlClient,
     team,
@@ -52,6 +53,8 @@ pub struct AppState {
     pub pdl: Arc<PdlClient>,
     /// Limits paid counts per user.
     pub search_limit: Arc<RateLimiter<uuid::Uuid>>,
+    /// The team's CRM and ATS. Not configured until RECRUITLY_API_KEY is set.
+    pub recruitly: Arc<Recruitly>,
 }
 
 impl AppState {
@@ -74,6 +77,7 @@ impl AppState {
                 COUNTS_PER_TEN_MINUTES,
                 std::time::Duration::from_secs(600),
             )),
+            recruitly: Arc::new(Recruitly::new(None, None)),
         }
     }
 }
@@ -121,6 +125,17 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/candidates/rank", post(candidates::rank_now))
         .route("/api/candidates/:id/decide", post(candidates::decide))
         .route("/api/people/save", post(people::save))
+        .route("/api/recruitly/status", get(crm::status))
+        .route("/api/recruitly/test", post(crm::test))
+        .route("/api/recruitly/jobs", get(crm::jobs))
+        .route("/api/recruitly/jobs/:id", get(crm::job_preview))
+        .route("/api/roles/from-recruitly", post(crm::import_role))
+        .route("/api/roles/:id/recruitly", put(crm::link_job))
+        .route(
+            "/api/candidates/:id/recruitly-check",
+            post(crm::check_again),
+        )
+        .route("/api/candidates/:id/handover", post(crm::handover))
         .with_state(state);
     let api = api.layer(middleware::from_fn(require_change_header));
     let app = match web_dir {
