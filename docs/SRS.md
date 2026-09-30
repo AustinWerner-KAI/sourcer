@@ -34,13 +34,13 @@ Team size is still to confirm (see open decisions).
 | F2 | Create a role for a client; upload or paste a job spec | Must | M1 |
 | F3 | Turn the spec into a brief (level, must-haves, capabilities, domain focus, tools, locations, employer types); resourcer confirms before any paid search. Capabilities only rank; a Must domain narrows the search, a Plus domain only ranks | Must | M1 |
 | F4 | Ask how to treat each named tool (required, nice, being replaced) | Must | M1 |
-| F5 | Search People Data Labs from the confirmed brief; show the credit cost first | Must | M1 |
+| F5 | Search People Data Labs from the confirmed brief: count per location first (1 credit each), then pull a chosen number (1 credit each; over 50 needs a second confirmation). A count is pulled once; people already found are never paid for again | Must | M1 |
 | F6 | Rank candidates with a reason and a list of unknowns for each | Must | M1 |
 | F7 | Known check: flag anyone the team has contacted, placed or blocked | Must | M1 |
 | F8 | Honour the client off-limits list: never surface their staff | Must | M1 |
 | F9 | Shortlist or reject with a reason code (FIT, SENIOR, JUNIOR, FUNCTION, SKILL, LOCATION, EMPLOYER, KNOWN) | Must | M1 |
 | F10 | Save a LinkedIn profile the resourcer is viewing, via a browser extension (no automation) | Must | M1 |
-| F11 | Get work email and phone from Apollo for shortlisted people only | Must | M2 |
+| F11 | Work email and phone: taken from People Data Labs when pulled (paid plan; only an address at the person's own employer), Apollo for shortlisted people otherwise. Personal emails are never taken from a provider | Must | M2 |
 | F12 | Draft outreach in the resourcer's voice for email, InMail and WhatsApp | Must | M2 |
 | F13 | Approve one person's whole sequence (first message plus follow-ups) once | Must | M2 |
 | F14 | Send approved email and follow-ups from the resourcer's own Outlook mailbox | Must | M2 |
@@ -149,6 +149,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 30 Sep 2026 | F5: search step built (count, then pull). F11: PDL work email and phone are saved when pulled; personal emails never (Kai) |
 | 30 Sep 2026 | F3: brief gains Capabilities (functional and soft skills, ranking only) and Domain focus (Must narrows the search, Plus only ranks). The hiring client and off-limits clients are always left out. D8 decided: Claude |
 | 29 Sep 2026 | D1 to D4 decided: Microsoft 365 consent yes, office machine hosting, PDL paid plan after the build, targets confirmed |
 | 29 Sep 2026 | First version, drawn from the Product and Solution Design doc and the decisions log |

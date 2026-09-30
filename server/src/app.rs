@@ -18,11 +18,15 @@ use crate::{
     auth::AuthConfig,
     domain::Health,
     ratelimit::{self, RateLimiter},
-    roles, team,
+    roles, searching,
+    sources::pdl::PdlClient,
+    team,
 };
 
 /// Brief drafts each person may run in ten minutes.
 const DRAFTS_PER_TEN_MINUTES: u32 = 20;
+/// Paid counts each person may run in ten minutes.
+const COUNTS_PER_TEN_MINUTES: u32 = 30;
 
 /// Header the web app sends with every change. A page on another site cannot
 /// send it without the browser asking first (which this server never allows),
@@ -42,6 +46,10 @@ pub struct AppState {
     pub ai: Arc<Claude>,
     /// Limits paid brief drafts per user.
     pub draft_limit: Arc<RateLimiter<uuid::Uuid>>,
+    /// Finds people. Not configured until PDL_API_KEY is set.
+    pub pdl: Arc<PdlClient>,
+    /// Limits paid counts per user.
+    pub search_limit: Arc<RateLimiter<uuid::Uuid>>,
 }
 
 impl AppState {
@@ -57,6 +65,11 @@ impl AppState {
             ai: Arc::new(Claude::new(None, None)),
             draft_limit: Arc::new(RateLimiter::new(
                 DRAFTS_PER_TEN_MINUTES,
+                std::time::Duration::from_secs(600),
+            )),
+            pdl: Arc::new(PdlClient::new(None)),
+            search_limit: Arc::new(RateLimiter::new(
+                COUNTS_PER_TEN_MINUTES,
                 std::time::Duration::from_secs(600),
             )),
         }
@@ -99,6 +112,9 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/brief", put(roles::save_brief))
         .route("/api/roles/:id/brief/draft", post(roles::draft_brief))
         .route("/api/roles/:id/brief/confirm", post(roles::confirm_brief))
+        .route("/api/roles/:id/search", get(searching::get_search))
+        .route("/api/roles/:id/search/count", post(searching::count))
+        .route("/api/roles/:id/search/pull", post(searching::pull))
         .with_state(state);
     let api = api.layer(middleware::from_fn(require_change_header));
     let app = match web_dir {
@@ -1262,6 +1278,307 @@ mod tests {
                 .unwrap()
                 .len()
                 >= 5
+        );
+    }
+
+    /// A stand-in for People Data Labs: every search matches `total` people and
+    /// returns as many made-up records as asked for. Returns (url, calls).
+    async fn fake_pdl(total: u64) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        fake_pdl_seeing(total, Arc::default()).await
+    }
+
+    type Bodies = Arc<std::sync::Mutex<Vec<Value>>>;
+
+    async fn fake_pdl_seeing(
+        total: u64,
+        bodies: Bodies,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let app = Router::new().route(
+            "/v5/person/search",
+            post(move |Json(body): Json<Value>| {
+                let seen = seen.clone();
+                let bodies = bodies.clone();
+                async move {
+                    bodies.lock().unwrap().push(body.clone());
+                    let n = seen.fetch_add(1, Ordering::SeqCst);
+                    let size = body["size"].as_u64().unwrap().min(total);
+                    let data: Vec<Value> = (0..size)
+                        .map(|i| json!({"id": format!("p-{n}-{i}-{}", Uuid::new_v4()), "full_name": "Sample Person",
+                                        "job_company_name": "Samplefirm"}))
+                        .collect();
+                    Json(json!({"status": 200, "total": total, "data": data}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, calls)
+    }
+
+    fn searching_app(pool: PgPool, pdl_url: &str) -> (Router, Arc<PdlClient>) {
+        let pdl = Arc::new(PdlClient::with_base_url(Some("k".into()), pdl_url));
+        let mut state = AppState::new(Some(pool), None);
+        state.pdl = pdl.clone();
+        (router(state), pdl)
+    }
+
+    /// A role for a new client with a confirmed brief for New York and Dubai.
+    async fn searchable_role(app: &Router, me: &str) -> String {
+        let client = new_client(app, me, "Client S", false).await;
+        let body = json!({"client_id": client["id"], "title": "IAM", "spec_text": ""});
+        let role = json_body(send(app, json_req("POST", "/api/roles", me, body)).await).await;
+        let uri = format!("/api/roles/{}", role["id"].as_str().unwrap());
+        let mut l = lines(Some("required"));
+        l["locations"] = json!(["New York", "Dubai"]);
+        let res = send(
+            app,
+            json_req(
+                "POST",
+                &format!("{uri}/brief/confirm"),
+                me,
+                json!({"lines": l, "based_on": null}),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        uri
+    }
+
+    #[tokio::test]
+    async fn searching_is_blocked_without_a_key_and_says_why() {
+        let Some(pool) = testutil::pool().await else {
+            return;
+        };
+        let org = testutil::org(&pool).await;
+        let (_, me) = signed_in(&pool, org, "resourcer").await;
+        let app = plain_app(pool.clone());
+        let uri = searchable_role(&app, &me).await;
+        let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+        assert!(s["blocked"].as_str().unwrap().contains("not set up"));
+        assert_eq!(s["locations"], json!(["New York", "Dubai"]));
+        let res = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("{uri}/search/count"),
+                &me,
+                json!({"key": "a"}),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn count_then_pull_charges_once_and_saves_people() {
+        use std::sync::atomic::Ordering;
+        let Some(pool) = testutil::pool().await else {
+            return;
+        };
+        let org = testutil::org(&pool).await;
+        let (_, me) = signed_in(&pool, org, "resourcer").await;
+        let bodies: Bodies = Arc::default();
+        let (url, calls) = fake_pdl_seeing(245, bodies.clone()).await;
+        let (app, pdl) = searching_app(pool.clone(), &url);
+        let uri = searchable_role(&app, &me).await;
+        let count_uri = format!("{uri}/search/count");
+        let pull_uri = format!("{uri}/search/pull");
+
+        // Count: one call per location; pressing again with the same key is free.
+        let key = Uuid::new_v4().to_string();
+        let s = json_body(send(&app, json_req("POST", &count_uri, &me, json!({"key": key}))).await)
+            .await;
+        assert_eq!(
+            s["count"]["locations"],
+            json!([{"label": "New York", "total": 245}, {"label": "Dubai", "total": 245}])
+        );
+        assert_eq!(
+            (
+                s["count"]["stale"].as_bool(),
+                s["credits_this_month"].as_i64()
+            ),
+            (Some(false), Some(2))
+        );
+        send(&app, json_req("POST", &count_uri, &me, json!({"key": key}))).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let count_id = s["count"]["id"].clone();
+
+        // Choices are checked before anything is queued.
+        let pick = |ny: u32, dxb: u32, confirmed: bool, key: &str| {
+            json!({"count_id": count_id, "confirmed": confirmed, "key": key,
+                   "picks": [{"location": "New York", "size": ny}, {"location": "Dubai", "size": dxb}]})
+        };
+        for (body, why) in [
+            (pick(0, 0, false, "x1"), "nothing chosen"),
+            (pick(101, 0, true, "x2"), "over one page"),
+            (pick(40, 20, false, "x3"), "over 50 needs confirming"),
+            (
+                json!({"count_id": count_id, "confirmed": true, "key": "x4",
+                    "picks": [{"location": "Paris", "size": 5}]}),
+                "not counted",
+            ),
+        ] {
+            let res = send(&app, json_req("POST", &pull_uri, &me, body)).await;
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{why}");
+        }
+
+        // Pull 40 + 20, confirmed; a second press queues nothing more.
+        let s = json_body(
+            send(
+                &app,
+                json_req("POST", &pull_uri, &me, pick(40, 20, true, "p1")),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            (s["pull"]["requested"].as_i64(), s["pull"]["done"].as_bool()),
+            (Some(60), Some(false))
+        );
+        send(
+            &app,
+            json_req("POST", &pull_uri, &me, pick(40, 20, true, "p1")),
+        )
+        .await;
+        let jobs: Vec<(Uuid, Uuid, String, Value, i32)> = sqlx::query_as(
+            "SELECT id, org_id, kind, payload, attempts FROM job
+             WHERE kind = 'search.pull' AND payload->>'pull_id' = $1",
+        )
+        .bind(s["pull"]["id"].as_str().unwrap())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(jobs.len(), 2, "one job per location");
+
+        // The worker runs each location; running one again never charges twice.
+        let handler = searching::PullHandler {
+            pool: pool.clone(),
+            source: pdl,
+        };
+        for (id, org_id, kind, payload, attempts) in jobs.iter().chain(jobs.iter().take(1)) {
+            let job = crate::jobs::Job {
+                id: *id,
+                org_id: *org_id,
+                kind: kind.clone(),
+                payload: payload.clone(),
+                attempts: *attempts,
+            };
+            crate::worker::JobHandler::handle(&handler, &job)
+                .await
+                .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 4, "2 counts + 2 pulls");
+        let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+        let p = &s["pull"];
+        assert_eq!(
+            (
+                p["pulled"].as_i64(),
+                p["new_candidates"].as_i64(),
+                p["done"].as_bool(),
+                p["locations_done"].as_i64()
+            ),
+            (Some(60), Some(60), Some(true), Some(2))
+        );
+        assert_eq!(s["credits_this_month"].as_i64(), Some(62));
+        let saved: i64 = sqlx::query_scalar("SELECT count(*) FROM candidacy WHERE org_id = $1")
+            .bind(org)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(saved, 60);
+        // The second location's pull left out everyone the first one found.
+        let last = bodies.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            last["query"]["bool"]["must_not"][0]["terms"]["id"]
+                .as_array()
+                .map(Vec::len),
+            jobs[0].3["size"].as_u64().map(|n| n as usize)
+        );
+        // The same count cannot be pulled twice.
+        let res = send(
+            &app,
+            json_req("POST", &pull_uri, &me, pick(5, 0, false, "p9")),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+
+        // Confirming a new version makes the count stale; pulling from it is refused.
+        let mut l = lines(Some("required"));
+        l["locations"] = json!(["Dubai"]);
+        let res = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("{uri}/brief/confirm"),
+                &me,
+                json!({"lines": l, "based_on": 1}),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+        assert_eq!(
+            (s["count"]["stale"].as_bool(), s["brief_version"].as_i64()),
+            (Some(true), Some(2))
+        );
+        let res = send(
+            &app,
+            json_req("POST", &pull_uri, &me, pick(5, 0, false, "p2")),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+
+        // Another organisation cannot see or use this role's search.
+        let other = testutil::org(&pool).await;
+        let (_, outsider) = signed_in(&pool, other, "admin").await;
+        assert_eq!(
+            send(&app, get_req(&format!("{uri}/search"), Some(&outsider)))
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let res = send(
+            &app,
+            json_req("POST", &count_uri, &outsider, json!({"key": "o"})),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn paused_organisation_cannot_count() {
+        let Some(pool) = testutil::pool().await else {
+            return;
+        };
+        let org = testutil::org(&pool).await;
+        let (_, me) = signed_in(&pool, org, "admin").await;
+        let (url, calls) = fake_pdl(10).await;
+        let (app, _) = searching_app(pool.clone(), &url);
+        let uri = searchable_role(&app, &me).await;
+        sqlx::query("UPDATE org SET paid_calls_paused = true WHERE id = $1")
+            .bind(org)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let res = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("{uri}/search/count"),
+                &me,
+                json!({"key": "k"}),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "nothing spent"
         );
     }
 
