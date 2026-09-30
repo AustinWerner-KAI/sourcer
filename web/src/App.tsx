@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api/client";
 import { Screen } from "./screens/Screen";
@@ -7,12 +7,20 @@ import { Team } from "./screens/Team";
 import { Briefs, NewRole } from "./screens/Briefs";
 import { BriefEditor } from "./screens/BriefEditor";
 import { Search } from "./screens/Search";
+import { Candidates } from "./screens/Candidates";
+import { CandidateRoles } from "./screens/CandidateRoles";
 import { useParams } from "react-router-dom";
 
 /** A fresh editor per role, so edits on one role never carry to another. */
 function BriefEditorPage() {
   const { id } = useParams();
   return <BriefEditor key={id} />;
+}
+
+/** A fresh candidates screen per role, so an open reject never carries over. */
+function CandidatesPage() {
+  const { id } = useParams();
+  return <Candidates key={id} />;
 }
 
 /** A fresh search screen per role, so choices never carry to another role. */
@@ -23,9 +31,16 @@ function SearchPage() {
 
 const screens = [
   { path: "/today", label: "Today", note: "Replies waiting, follow-ups due and new matches for live roles." },
-  { path: "/candidates", label: "Candidates", note: "Ranked list with reasons and unknowns. Shortlist or reject with a reason code." },
-  { path: "/outreach", label: "Outreach", note: "Drafts for email, LinkedIn and WhatsApp. Approve each message before it goes." },
-  { path: "/client-map", label: "Client map", note: "Where a client's hires come from: feeders, universities, titles." },
+  {
+    path: "/outreach",
+    label: "Outreach",
+    note: "Drafts for email, LinkedIn and WhatsApp. Approve each message before it goes.",
+  },
+  {
+    path: "/client-map",
+    label: "Client map",
+    note: "Where a client's hires come from: feeders, universities, titles.",
+  },
   { path: "/playbook", label: "Playbook", note: "Rules learned from your feedback, waiting for approval or active." },
 ];
 
@@ -33,6 +48,8 @@ export function App() {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30_000 });
   const queryClient = useQueryClient();
+  // A role's candidates live under /brief/:id but belong to Candidates in the menu.
+  const onCandidates = /^\/brief\/[^/]+\/candidates/.test(useLocation().pathname);
 
   if (me.isLoading) return <div className="loading" aria-busy="true" />;
   if (!me.data) return <SignIn />;
@@ -57,7 +74,12 @@ export function App() {
         </div>
         <div className="nav-links">
           <NavLink to="/today">Today</NavLink>
-          <NavLink to="/brief">Brief</NavLink>
+          <NavLink to="/brief" className={({ isActive }) => (isActive && !onCandidates ? "active" : undefined)}>
+            Brief
+          </NavLink>
+          <NavLink to="/candidates" className={({ isActive }) => (isActive || onCandidates ? "active" : undefined)}>
+            Candidates
+          </NavLink>
           {screens.slice(1).map((s) => (
             <NavLink key={s.path} to={s.path}>
               {s.label}
@@ -94,6 +116,8 @@ export function App() {
         <Route path="/brief/new" element={<NewRole />} />
         <Route path="/brief/:id" element={<BriefEditorPage />} />
         <Route path="/brief/:id/search" element={<SearchPage />} />
+        <Route path="/brief/:id/candidates" element={<CandidatesPage />} />
+        <Route path="/candidates" element={<CandidateRoles />} />
         <Route path="/team" element={isAdmin ? <Team me={me.data} /> : <Navigate to="/today" replace />} />
       </Routes>
     </div>

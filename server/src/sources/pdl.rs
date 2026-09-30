@@ -125,6 +125,7 @@ fn parse_person(p: &Value) -> Option<PersonRecord> {
             })
         }),
         phones: phones(p),
+        skills: skills(p),
         experience,
     })
 }
@@ -189,6 +190,31 @@ pub fn work_email(raw: &str) -> Option<String> {
     ok.then_some(e)
 }
 
+/// Most skills kept per person, and longest skill name.
+const MAX_SKILLS: usize = 30;
+const MAX_SKILL_CHARS: usize = 60;
+
+/// Skills as listed, trimmed, without repeats.
+fn skills(p: &Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in p
+        .get("skills")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        let s: String = s.trim().chars().take(MAX_SKILL_CHARS).collect();
+        if !s.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(&s)) {
+            out.push(s);
+        }
+        if out.len() == MAX_SKILLS {
+            break;
+        }
+    }
+    out
+}
+
 /// Mobile first, then other numbers; at most three, no repeats.
 fn phones(p: &Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -245,6 +271,7 @@ mod tests {
               "emails": [{"address": "alex.personal@gmail.com", "type": "personal"}],
               "mobile_phone": "+1 212 555 0100",
               "phone_numbers": ["+1 212 555 0100", "+1 646 555 0199"],
+              "skills": ["IAM", "okta", " iam ", ""],
               "experience": [
                 {"company": {"name": "examplepay", "website": "examplepay.com"}, "title": {"name": "senior security engineer"}, "start_date": "2022-01", "end_date": null},
                 {"company": {"name": "samplebank"}, "title": {"name": "iam engineer"}, "start_date": "2018", "end_date": "2021-12"},
@@ -253,7 +280,8 @@ mod tests {
             },
             {"full_name": "no id, skipped"},
             {"id": "pdl-2", "full_name": "sam sample", "job_title": true, "experience": true,
-             "work_email": true, "mobile_phone": true, "phone_numbers": true, "personal_emails": true}
+             "work_email": true, "mobile_phone": true, "phone_numbers": true, "personal_emails": true,
+             "skills": true}
           ]
         })
     }
@@ -287,6 +315,11 @@ mod tests {
             "not at a company they work for"
         );
         assert_eq!(a.phones, ["+1 212 555 0100", "+1 646 555 0199"]);
+        assert_eq!(
+            a.skills,
+            ["IAM", "okta"],
+            "trimmed, blanks and repeats dropped"
+        );
         let all = format!("{a:?}");
         assert!(!all.contains("personal"), "personal emails are never read");
 
@@ -297,7 +330,7 @@ mod tests {
             "masked on free plans"
         );
         assert_eq!(b.current_title, None);
-        assert!(b.experience.is_empty());
+        assert!(b.experience.is_empty() && b.skills.is_empty());
     }
 
     #[test]

@@ -101,7 +101,7 @@ fn brief_of(r: BriefRow) -> (Uuid, i32, BriefLines) {
 }
 
 /// The role's latest confirmed brief: (id, version, lines).
-async fn confirmed_brief(
+pub(crate) async fn confirmed_brief(
     pool: &PgPool,
     role_id: Uuid,
 ) -> anyhow::Result<Option<(Uuid, i32, BriefLines)>> {
@@ -143,7 +143,11 @@ async fn blocked(
     })
 }
 
-async fn role_exists(pool: &PgPool, org_id: Uuid, role_id: Uuid) -> anyhow::Result<bool> {
+pub(crate) async fn role_exists(
+    pool: &PgPool,
+    org_id: Uuid,
+    role_id: Uuid,
+) -> anyhow::Result<bool> {
     Ok(
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM role WHERE id = $1 AND org_id = $2)")
             .bind(role_id)
@@ -684,6 +688,8 @@ impl<S: PeopleSource + 'static> JobHandler for PullHandler<S> {
                 location: Some(p.location),
             };
             run_search(&self.pool, self.source.as_ref(), &req).await?;
+            // Rank the new people straight away (the ranker skips anyone ranked).
+            crate::candidates::queue_rank(&self.pool, job.org_id, p.role_id).await?;
             Ok(())
         })
     }

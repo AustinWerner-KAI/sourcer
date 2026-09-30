@@ -5,6 +5,7 @@ pub mod ai;
 pub mod app;
 pub mod audit;
 pub mod auth;
+pub mod candidates;
 pub mod config;
 pub mod db;
 pub mod domain;
