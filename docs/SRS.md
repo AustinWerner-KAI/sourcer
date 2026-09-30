@@ -32,7 +32,7 @@ Team size is still to confirm (see open decisions).
 | --- | --- | --- | --- |
 | F1 | Sign in with Microsoft 365; admin and resourcer roles | Must | M0 |
 | F2 | Create a role for a client; upload or paste a job spec | Must | M1 |
-| F3 | Turn the spec into a five-line brief (level, must-haves, tools, locations, employer types); resourcer confirms before any paid search | Must | M1 |
+| F3 | Turn the spec into a brief (level, must-haves, capabilities, domain focus, tools, locations, employer types); resourcer confirms before any paid search. Capabilities only rank; a Must domain narrows the search, a Plus domain only ranks | Must | M1 |
 | F4 | Ask how to treat each named tool (required, nice, being replaced) | Must | M1 |
 | F5 | Search People Data Labs from the confirmed brief; show the credit cost first | Must | M1 |
 | F6 | Rank candidates with a reason and a list of unknowns for each | Must | M1 |
@@ -100,7 +100,7 @@ Safety comes first: no message leaves without approval, and no person is contact
 
 ## Open decisions
 
-D1 to D4 are decided (29 Sep), so Sprint 1 can start. Six decisions remain; they block later milestones.
+D1 to D4 and D8 are decided. Five decisions remain; they block later milestones.
 
 | # | Decision | Blocks | Status |
 | --- | --- | --- | --- |
@@ -111,7 +111,7 @@ D1 to D4 are decided (29 Sep), so Sprint 1 can start. Six decisions remain; they
 | D5 | Team: who uses it at launch, and who is admin | M1 | Open |
 | D6 | Client off-limits list | M1 (F8) | Open |
 | D7 | Apollo API key | M2 (F11) | Open |
-| D8 | AI provider and key for briefs, ranking and drafts | M1 (F3, F6) | Open |
+| D8 | AI provider and key for briefs, ranking and drafts. **Claude** (Anthropic); Kai adds the key | M1 (F3, F6) | Decided |
 | D9 | Privacy adviser sign-off: do-not-contact list, retention period, personal-email rule | M2 (sending) | Open |
 | D10 | Which ATS, and how handover works (API or export) | M3 (F18) | Open |
 
@@ -149,6 +149,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 30 Sep 2026 | F3: brief gains Capabilities (functional and soft skills, ranking only) and Domain focus (Must narrows the search, Plus only ranks). The hiring client and off-limits clients are always left out. D8 decided: Claude |
 | 29 Sep 2026 | D1 to D4 decided: Microsoft 365 consent yes, office machine hosting, PDL paid plan after the build, targets confirmed |
 | 29 Sep 2026 | First version, drawn from the Product and Solution Design doc and the decisions log |
 
