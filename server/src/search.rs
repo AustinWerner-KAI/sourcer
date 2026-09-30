@@ -250,6 +250,7 @@ async fn upsert_person(
                    current_employer = COALESCE($6, current_employer),
                    current_employer_domain = CASE WHEN $6 IS NOT NULL THEN $8 ELSE current_employer_domain END,
                    location = COALESCE($7, location),
+                   skills = CASE WHEN jsonb_array_length($9) > 0 THEN $9 ELSE skills END,
                    last_seen = now()
                  WHERE id = $1",
             )
@@ -261,6 +262,7 @@ async fn upsert_person(
             .bind(&r.current_employer)
             .bind(&r.location)
             .bind(&r.current_employer_domain)
+            .bind(sqlx::types::Json(&r.skills))
             .execute(&mut **tx)
             .await?;
             id
@@ -268,8 +270,8 @@ async fn upsert_person(
         None => {
             sqlx::query_scalar(
                 "INSERT INTO person (org_id, pdl_id, linkedin_url, full_name, current_title,
-                                     current_employer, location, current_employer_domain, last_seen)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+                                     current_employer, location, current_employer_domain, skills, last_seen)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
                  RETURNING id",
             )
             .bind(org_id)
@@ -280,6 +282,7 @@ async fn upsert_person(
             .bind(&r.current_employer)
             .bind(&r.location)
             .bind(&r.current_employer_domain)
+            .bind(sqlx::types::Json(&r.skills))
             .fetch_one(&mut **tx)
             .await?
         }
@@ -420,6 +423,7 @@ mod tests {
             }],
             work_email: None,
             phones: vec![],
+            skills: vec![],
         }
     }
 
