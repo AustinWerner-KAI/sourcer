@@ -30,6 +30,7 @@ impl CandidacyState {
         matches!(
             (self, next),
             (Found, KnownChecked)
+                | (Found, Ranked) // the known check runs live on every list
                 | (KnownChecked, Ranked)
                 | (Ranked, Shortlisted)
                 | (Ranked, Rejected)
@@ -380,6 +381,93 @@ pub struct PullRequest {
     /// Required when pulling more than 50 people at once.
     pub confirmed: bool,
     pub key: String,
+}
+
+/// The three lists on the Candidates screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum CandidateTab {
+    #[default]
+    Review,
+    Shortlisted,
+    Rejected,
+}
+
+/// The Candidates screen for one role (SRS F6, F7, F9).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CandidatesView {
+    pub tab: CandidateTab,
+    /// The confirmed brief people are ranked against, if there is one.
+    pub brief_version: Option<i32>,
+    #[ts(type = "number")]
+    pub to_review: i64,
+    #[ts(type = "number")]
+    pub shortlisted: i64,
+    #[ts(type = "number")]
+    pub rejected: i64,
+    /// Found but not ranked yet.
+    #[ts(type = "number")]
+    pub unranked: i64,
+    /// A ranking is queued or running.
+    pub ranking: bool,
+    /// Why ranking cannot run now, in words for people.
+    pub rank_blocked: Option<String>,
+    /// Best first. At most `MAX_LISTED` people.
+    pub people: Vec<CandidateRow>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CandidateRow {
+    /// The candidacy (this person for this role).
+    pub id: uuid::Uuid,
+    /// Sent back with a decision, so two people cannot overwrite each other.
+    pub version: i32,
+    pub state: CandidacyState,
+    pub name: String,
+    pub title: Option<String>,
+    pub employer: Option<String>,
+    pub location: Option<String>,
+    /// Without the scheme, e.g. "linkedin.com/in/someone".
+    pub linkedin_url: Option<String>,
+    /// "A", "B" or "C" once ranked.
+    pub tier: Option<String>,
+    pub score: Option<i32>,
+    /// Why, in one or two sentences. Strong evidence is wrapped in **double asterisks**.
+    pub reason: Option<String>,
+    /// Things to check that the profile does not show.
+    pub unknowns: Vec<String>,
+    /// Known to the team through another role or a past message.
+    pub known: Option<String>,
+    /// Opted out or asked to be erased: never contacted.
+    pub do_not_contact: bool,
+    /// No current employer on record: check before any contact.
+    pub employer_unknown: bool,
+    pub has_work_email: bool,
+    pub has_phone: bool,
+    pub reject_reason: Option<ReasonCode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum DecisionAction {
+    Shortlist,
+    Reject,
+    /// Move a rejected person back to the list to review.
+    Reconsider,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Decision {
+    pub action: DecisionAction,
+    /// Required to reject.
+    pub reason: Option<ReasonCode>,
+    /// The version the screen showed.
+    pub version: i32,
 }
 
 #[cfg(test)]
