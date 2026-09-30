@@ -10,6 +10,8 @@ import type { NewRole } from "./types/NewRole";
 import type { RoleDetail } from "./types/RoleDetail";
 import type { RoleSummary } from "./types/RoleSummary";
 import type { RoleUpdate } from "./types/RoleUpdate";
+import type { PullRequest } from "./types/PullRequest";
+import type { SearchState } from "./types/SearchState";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -72,6 +74,11 @@ export const api = {
   /** `basedOn` is the brief version the editor loaded, so stale windows are refused. */
   confirmBrief: (id: string, lines: BriefLines, basedOn: number | null) =>
     send<RoleDetail>("POST", `/api/roles/${id}/brief/confirm`, { lines, based_on: basedOn }),
+
+  search: (id: string) => get<SearchState>(`/api/roles/${id}/search`),
+  /** `key` is fresh per press, so a repeated request never pays twice. */
+  countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
+  pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {
