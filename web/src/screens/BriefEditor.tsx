@@ -3,6 +3,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
 import type { BriefLines } from "../api/types/BriefLines";
+import type { DomainWeight } from "../api/types/DomainWeight";
 import type { RoleDetail } from "../api/types/RoleDetail";
 import type { ToolStatus } from "../api/types/ToolStatus";
 import { Steps } from "./Briefs";
@@ -19,11 +20,17 @@ const TOOL_CHOICES: { value: ToolStatus; label: string }[] = [
   { value: "nice", label: "Nice to have" },
   { value: "replacing", label: "Being replaced" },
 ];
+const WEIGHT_CHOICES: { value: DomainWeight; label: string }[] = [
+  { value: "must", label: "Must" },
+  { value: "plus", label: "Plus" },
+];
 
 const empty: BriefLines = {
   levels: [],
   excluded_titles: ["Manager", "Director", "Head of", "VP", "Chief"],
   must_haves: [],
+  capabilities: [],
+  domains: [],
   tools: [],
   locations: [],
   remote: false,
@@ -36,6 +43,8 @@ export function problems(l: BriefLines): string[] {
   const out: string[] = [];
   if (l.levels.length === 0) out.push("Choose at least one level.");
   if (l.must_haves.length === 0) out.push("Add at least one must-have.");
+  if (l.must_haves.length > 3) out.push("Keep to three must-haves.");
+  if (l.domains.length === 0) out.push("Add at least one domain focus.");
   const open = l.tools.filter((t) => t.status === null).length;
   if (open > 0) out.push(`Answer ${open} named tool${open === 1 ? "" : "s"}.`);
   if (l.locations.length === 0 && !l.remote) out.push("Add a location, or allow remote.");
@@ -43,7 +52,7 @@ export function problems(l: BriefLines): string[] {
   return out;
 }
 
-/** Step 2: check the five lines, answer every tool, confirm. */
+/** Step 2: check the brief, answer every tool, confirm. */
 export function BriefEditor() {
   const { id = "" } = useParams();
   const draftNote = (useLocation().state as { draftNote?: string | null } | null)?.draftNote;
@@ -133,7 +142,7 @@ export function BriefEditor() {
     if (
       replacing &&
       !window.confirm(
-        "Draft again from the spec? Levels, must-haves, tools and locations are replaced. Your tool answers, employer types and leave-out list are kept.",
+        "Draft again from the spec? Levels, must-haves, capabilities, domains, tools and locations are replaced. Your tool answers, Must or Plus choices, employer types and leave-out list are kept.",
       )
     )
       return;
@@ -222,7 +231,7 @@ export function BriefEditor() {
           {!lines ? (
             <div>
               <h2 className="panel-title">No brief yet</h2>
-              <p className="panel-note">Draft it from the spec, or fill in the five lines yourself.</p>
+              <p className="panel-note">Draft it from the spec, or fill it in yourself.</p>
               {draftNote && !draft.isSuccess && <p className="form-error">{draftNote}</p>}
               <button className="btn-ghost" onClick={() => set({})}>
                 Fill in myself
@@ -235,7 +244,7 @@ export function BriefEditor() {
                   Brief confirmed (version {brief?.version}). Any change starts version {(brief?.version ?? 0) + 1}.
                 </div>
               ) : brief?.drafted_by_ai ? (
-                <div className="notice">Claude drafted these five lines from the spec. Check each one.</div>
+                <div className="notice">Claude drafted this brief from the spec. Check each line.</div>
               ) : null}
 
               <Line n={1} title="Level" hint="Hands-on levels to search. Crossed out titles are never searched.">
@@ -252,7 +261,63 @@ export function BriefEditor() {
                 <MustHaves items={lines.must_haves} onChange={(must_haves) => set({ must_haves })} />
               </Line>
 
-              <Line n={3} title="Named tools" hint="A tool in a spec can be one the client is replacing. Answer each one.">
+              <Line
+                n={3}
+                title="Capabilities"
+                hint="Functional and soft skills. Used to rank and explain matches, not to filter: few profiles list them."
+              >
+                <ChipList
+                  items={lines.capabilities}
+                  onChange={(capabilities) => set({ capabilities })}
+                  add="Add capability"
+                  tone="yes"
+                />
+              </Line>
+
+              <Line
+                n={4}
+                title="Domain focus"
+                hint="The area of the business they should know. Must counts toward the search; Plus only lifts the ranking."
+              >
+                {lines.domains.map((d, i) => (
+                  <div key={d.name} className="tool">
+                    <span className="name">
+                      {d.name}
+                      <button
+                        className="x"
+                        aria-label={`Remove ${d.name}`}
+                        onClick={() => set({ domains: lines.domains.filter((_, j) => j !== i) })}
+                      >
+                        ×
+                      </button>
+                    </span>
+                    <span className="seg" role="radiogroup" aria-label={`How much ${d.name} counts`}>
+                      {WEIGHT_CHOICES.map((c) => (
+                        <button
+                          key={c.value}
+                          role="radio"
+                          aria-checked={d.weight === c.value}
+                          className={d.weight === c.value ? "sel" : undefined}
+                          onClick={() =>
+                            set({ domains: lines.domains.map((x, j) => (j === i ? { ...x, weight: c.value } : x)) })
+                          }
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+                <AddInput
+                  placeholder="Add a domain"
+                  onAdd={(name) =>
+                    !lines.domains.some((d) => d.name.toLowerCase() === name.toLowerCase()) &&
+                    set({ domains: [...lines.domains, { name, weight: "plus" }] })
+                  }
+                />
+              </Line>
+
+              <Line n={5} title="Named tools" hint="A tool in a spec can be one the client is replacing. Answer each one.">
                 {lines.tools.map((t, i) => (
                   <div key={t.name} className={`tool${t.status === null ? " ask" : ""}`}>
                     <span className="name">
@@ -291,7 +356,7 @@ export function BriefEditor() {
                 />
               </Line>
 
-              <Line n={4} title="Location">
+              <Line n={6} title="Location">
                 <ChipList items={lines.locations} onChange={(locations) => set({ locations })} add="Add city" tone="yes" />
                 <label className="check">
                   <input type="checkbox" checked={lines.remote} onChange={(e) => set({ remote: e.target.checked })} />
@@ -302,7 +367,7 @@ export function BriefEditor() {
                 )}
               </Line>
 
-              <Line n={5} title="Employer type">
+              <Line n={7} title="Employer type">
                 <div className="lbl">Search in</div>
                 <div className="chips">
                   {[...EMPLOYER_OPTIONS, ...lines.employer_types.filter((t) => !EMPLOYER_OPTIONS.includes(t))].map(

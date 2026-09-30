@@ -227,7 +227,7 @@ function AddClient({ onDone }: { onDone: (id: string | null) => void }) {
 }
 
 export function Steps({ at }: { at: 1 | 2 | 3 }) {
-  const names = ["Spec", "Check the five lines", "Search"];
+  const names = ["Spec", "Check the brief", "Search"];
   return (
     <div className="steps">
       {names.map((n, i) => (
