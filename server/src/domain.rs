@@ -351,6 +351,11 @@ pub struct PullView {
     pub done: bool,
     /// A location could not be pulled after several tries.
     pub failed: bool,
+    /// Which locations failed, by name.
+    pub failed_locations: Vec<String>,
+    /// Credits paid for people who were never saved (a location failed after
+    /// the provider charged). Already counted in credits_used.
+    pub credits_unsaved: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

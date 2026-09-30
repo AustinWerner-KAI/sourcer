@@ -203,14 +203,30 @@ async fn search_state(
         credits_used: credits,
     });
 
-    type PullRow = (Uuid, Uuid, i32, i32, i64, i64, i64, i64, i64, i64, bool);
+    type PullRow = (
+        Uuid,
+        Uuid,
+        i32,
+        i32,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        Vec<String>,
+    );
     let pull: Option<PullRow> = sqlx::query_as(
         "SELECT p.id, p.count_id, p.requested, p.locations,
-                coalesce(sum(r.records_pulled), 0), coalesce(sum(r.new_candidates), 0),
+                coalesce(sum(r.records_pulled) FILTER (WHERE r.finished_at IS NOT NULL), 0),
+                coalesce(sum(r.new_candidates), 0),
                 coalesce(sum(r.left_out), 0), coalesce(sum(r.unknown_employer), 0),
                 coalesce(sum(r.credits_used), 0), count(r.finished_at),
-                EXISTS (SELECT 1 FROM job j WHERE j.kind = $3 AND j.status = 'failed'
-                          AND j.payload->>'pull_id' = p.id::text)
+                coalesce(sum(r.credits_used) FILTER (WHERE r.finished_at IS NULL), 0),
+                ARRAY(SELECT j.payload->>'location' FROM job j
+                      WHERE j.kind = $3 AND j.status = 'failed'
+                        AND j.payload->>'pull_id' = p.id::text ORDER BY 1)
          FROM pull p LEFT JOIN run r ON r.pull_id = p.id
          WHERE p.role_id = $1 AND p.org_id = $2
          GROUP BY p.id ORDER BY p.created_at DESC LIMIT 1",
@@ -232,8 +248,10 @@ async fn search_state(
             unknown,
             credits,
             done,
-            failed,
+            unsaved,
+            failed_locations,
         )| {
+            let failed = !failed_locations.is_empty();
             PullView {
                 id,
                 count_id,
@@ -246,8 +264,11 @@ async fn search_state(
                 credits_used: credits as i32,
                 locations,
                 locations_done: done as i32,
-                done: done as i32 >= locations || failed,
+                // Every location has either finished or given up.
+                done: done as i32 + failed_locations.len() as i32 >= locations,
                 failed,
+                failed_locations,
+                credits_unsaved: unsaved as i32,
             }
         },
     );
