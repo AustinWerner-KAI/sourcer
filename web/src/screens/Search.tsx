@@ -297,7 +297,7 @@ export function Search() {
           </section>
         )}
 
-        {s.pull && <PullResult p={s.pull} />}
+        {s.pull && <PullResult p={s.pull} roleId={id} />}
       </div>
     </main>
   );
@@ -427,7 +427,7 @@ function CountRow({
   );
 }
 
-function PullResult({ p }: { p: PullView }) {
+function PullResult({ p, roleId }: { p: PullView; roleId: string }) {
   if (!p.done) {
     const pct = Math.round((100 * p.locations_done) / Math.max(1, p.locations));
     return (
@@ -472,7 +472,12 @@ function PullResult({ p }: { p: PullView }) {
           <div className="k">No known employer: check before any contact</div>
         </div>
       </div>
-      <p className="later">Ranking and the Candidates list come next sprint. Pressing twice never charges twice.</p>
+      <div className="bar">
+        <span className="total">Claude ranks the new people in about a minute.</span>
+        <Link className="btn-primary btn-inline" to={`/brief/${roleId}/candidates`}>
+          See the candidates
+        </Link>
+      </div>
     </section>
   );
 }
