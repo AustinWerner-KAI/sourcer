@@ -20,6 +20,8 @@ pub mod action {
     pub const BRIEF_DRAFTED: &str = "brief.draft";
     pub const BRIEF_SAVED: &str = "brief.save";
     pub const BRIEF_CONFIRMED: &str = "brief.confirm";
+    pub const SEARCH_COUNTED: &str = "search.count";
+    pub const SEARCH_PULLED: &str = "search.pull";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.

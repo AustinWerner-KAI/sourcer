@@ -1,6 +1,10 @@
 use std::net::SocketAddr;
 
-use sourcer_server::{ai, app, config::Config, db, worker::Worker};
+use std::sync::Arc;
+
+use sourcer_server::{
+    ai, app, config::Config, db, searching::PullHandler, sources::pdl::PdlClient, worker::Worker,
+};
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
@@ -15,9 +19,19 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
 
+    // People Data Labs, shared by the search screen and the background pulls.
+    let pdl = Arc::new(PdlClient::new(config.pdl_api_key.clone()));
+    if !pdl.configured() {
+        tracing::warn!("Searching is off; set PDL_API_KEY to turn it on");
+    }
+
     // Background jobs. Handlers are registered as features land.
     let (stop, stopped) = watch::channel(false);
-    let worker = tokio::spawn(Worker::new(pool.clone()).run(stopped));
+    let worker = Worker::new(pool.clone()).register(Arc::new(PullHandler {
+        pool: pool.clone(),
+        source: pdl.clone(),
+    }));
+    let worker = tokio::spawn(worker.run(stopped));
 
     let addr: SocketAddr = config.bind_addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -28,7 +42,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Microsoft 365 sign-in is not configured; set M365_TENANT_ID, M365_CLIENT_ID and M365_CLIENT_SECRET");
     }
     let mut state = app::AppState::new(Some(pool), auth);
-    state.ai = std::sync::Arc::new(ai::Claude::new(
+    state.pdl = pdl;
+    state.ai = Arc::new(ai::Claude::new(
         config.anthropic_api_key.clone(),
         config.anthropic_model.clone(),
     ));
