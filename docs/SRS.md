@@ -31,12 +31,12 @@ Team size is still to confirm (see open decisions).
 | ID | Requirement | Priority | Milestone |
 | --- | --- | --- | --- |
 | F1 | Sign in with Microsoft 365; admin and resourcer roles | Must | M0 |
-| F2 | Create a role for a client; upload or paste a job spec | Must | M1 |
+| F2 | Create a role for a client; paste a job spec, or start from a Recruitly job (title, client and spec are read in for the resourcer to check) | Must | M1 |
 | F3 | Turn the spec into a brief (level, must-haves, capabilities, domain focus, tools, locations, employer types); resourcer confirms before any paid search. Capabilities only rank; a Must domain narrows the search, a Plus domain only ranks | Must | M1 |
 | F4 | Ask how to treat each named tool (required, nice, being replaced) | Must | M1 |
 | F5 | Search People Data Labs from the confirmed brief: count per location first (1 credit each), then pull a chosen number (1 credit each; over 50 needs a second confirmation). A count is pulled once; people already found are never paid for again | Must | M1 |
 | F6 | Rank candidates with a reason and a list of unknowns for each. Claude ranks right after each pull, sent work evidence only (titles, employers, dates, location, skills), never names, contact details or profile links | Must | M1 |
-| F7 | Known check: flag anyone the team has contacted, placed or blocked. Runs live on every list; known people are flagged, not hidden, and the resourcer decides. Do-not-contact people cannot be shortlisted | Must | M1 |
+| F7 | Known check: flag anyone the team has contacted, placed or blocked. Runs live on every list; known people are flagged, not hidden, and the resourcer decides. Each person is also checked in Recruitly when shortlisted and again before being added there. Do-not-contact people (here or in Recruitly) cannot be shortlisted | Must | M1 |
 | F8 | Honour the client off-limits list: never surface their staff | Must | M1 |
 | F9 | Shortlist or reject with a reason code (FIT, SENIOR, JUNIOR, FUNCTION, SKILL, LOCATION, EMPLOYER, KNOWN) | Must | M1 |
 | F10 | Save a LinkedIn profile the resourcer is viewing, via a Chrome button (extension) that reads only the open page, only on click (no automation). The resourcer checks the details and picks the role; locked-out staff are refused | Must | M1 |
@@ -47,7 +47,7 @@ Team size is still to confirm (see open decisions).
 | F15 | InMail and WhatsApp assisted: copy and open, a person sends, then marks it sent | Must | M2 |
 | F16 | Detect email replies; a Replied button for other channels; stop all follow-ups on any reply | Must | M2 |
 | F17 | Today screen: replies waiting, follow-ups due, new matches | Must | M2 |
-| F18 | Hand a replied, interested candidate to the ATS | Must | M3 |
+| F18 | Hand a candidate to Recruitly (the ATS): a shortlisted person is added with one click, into the linked Recruitly job's pipeline, with a note on why. Someone a colleague owns in Recruitly, or a name-only match, asks first. A retry never makes a second record | Must | M1 |
 | F19 | Learn from reject reasons and draft edits; propose playbook rules for admin approval | Must | M3 |
 | F20 | Opt-out and erasure go on a do-not-contact list that is checked before every send | Must | M0 |
 | F21 | Client workforce map: where a client's hires come from | Nice | M3 |
@@ -87,6 +87,7 @@ Safety comes first: no message leaves without approval, and no person is contact
 - Stack: Rust (Axum, Tokio, SQLx), PostgreSQL 16, TypeScript (React, Vite), Docker Compose. Already built in the M0 scaffold.
 - Mail and sign-in: Microsoft 365 through Microsoft Graph. Needs admin consent.
 - Data: People Data Labs for discovery (the free tier hides city, email and phone; each search costs at least 1 credit). Apollo for contact details only.
+- CRM and ATS: Recruitly, through its API. The key goes in the address, so addresses are never logged. Calls are capped per day below the plan's limit (Professional: 10,000).
 - UK and EU privacy rules apply to candidate data and outreach.
 - Small team: build in two-week sprints, MVP first.
 
@@ -100,7 +101,7 @@ Safety comes first: no message leaves without approval, and no person is contact
 
 ## Open decisions
 
-D1 to D4 and D8 are decided. Five decisions remain; they block later milestones.
+D1 to D4, D8 and D10 are decided. Four decisions remain; they block later milestones.
 
 | # | Decision | Blocks | Status |
 | --- | --- | --- | --- |
@@ -113,7 +114,7 @@ D1 to D4 and D8 are decided. Five decisions remain; they block later milestones.
 | D7 | Apollo API key | M2 (F11) | Open |
 | D8 | AI provider and key for briefs, ranking and drafts. **Claude** (Anthropic); Kai adds the key | M1 (F3, F6) | Decided |
 | D9 | Privacy adviser sign-off: do-not-contact list, retention period, personal-email rule | M2 (sending) | Open |
-| D10 | Which ATS, and how handover works (API or export) | M3 (F18) | Open |
+| D10 | Which ATS, and how handover works. **Recruitly, by API:** checked at shortlist; a button adds shortlisted people to the linked job (Kai) | M1 (F7, F18) | Decided |
 
 ## Project plan
 
@@ -149,6 +150,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 30 Sep 2026 | D10 decided: Recruitly. F2: roles can start from a Recruitly job. F7: Recruitly check at shortlist. F18: add to Recruitly, moved to M1 (Kai: check on shortlist, button on shortlisted, link roles to jobs, pull the spec and client from Recruitly) |
 | 30 Sep 2026 | F10: LinkedIn save button built as a Chrome extension (Kai: Chrome, save straight to a role). Recruitly is the CRM/ATS for the known check and handover (D10, to plan) |
 | 30 Sep 2026 | F6, F7, F9: Candidates screen built. Ranking runs after each pull; known people are flagged, not hidden (Kai). LinkedIn save button (F10) moves to the next sprint |
 | 30 Sep 2026 | F5: search step built (count, then pull). F11: PDL work email and phone are saved when pulled; personal emails never (Kai) |
