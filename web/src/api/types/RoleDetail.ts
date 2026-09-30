@@ -2,6 +2,7 @@
 import type { Brief } from "./Brief";
 import type { Client } from "./Client";
 import type { LockedOut } from "./LockedOut";
+import type { RecruitlyLink } from "./RecruitlyLink";
 
 export type RoleDetail = { id: string, title: string, client: Client | null, spec_text: string, 
 /**
@@ -12,4 +13,8 @@ brief: Brief | null,
  * Companies whose staff are always left out of this role: the hiring
  * client and every off-limits client. Cannot be removed.
  */
-locked_out: Array<LockedOut>, };
+locked_out: Array<LockedOut>, 
+/**
+ * The Recruitly job this role came from or is linked to.
+ */
+recruitly_job: RecruitlyLink | null, };

@@ -28,6 +28,10 @@ pub mod action {
     pub const CANDIDATE_RECONSIDERED: &str = "candidate.reconsider";
     pub const PROFILE_SAVED: &str = "person.save_linkedin";
     pub const PEOPLE_MERGED: &str = "person.merge";
+    pub const ROLE_IMPORTED: &str = "role.recruitly_import";
+    pub const ROLE_JOB_LINKED: &str = "role.recruitly_link";
+    pub const PERSON_RECRUITLY_CHECKED: &str = "person.recruitly_check";
+    pub const CANDIDATE_HANDED_OVER: &str = "candidate.handover";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.

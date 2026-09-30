@@ -38,4 +38,24 @@ do_not_contact: boolean,
 /**
  * No current employer on record: check before any contact.
  */
-employer_unknown: boolean, has_work_email: boolean, has_phone: boolean, reject_reason: ReasonCode | null, };
+employer_unknown: boolean, has_work_email: boolean, has_phone: boolean, reject_reason: ReasonCode | null, 
+/**
+ * What Recruitly knows about them, in words. `None` when not checked or not there.
+ */
+recruitly_note: string | null, recruitly_checked: boolean, 
+/**
+ * The last check could not reach Recruitly.
+ */
+recruitly_check_failed: boolean, 
+/**
+ * Seconds since 1970 of the last check, for "checked 2 hours ago".
+ */
+recruitly_checked_at: number | null, 
+/**
+ * When they were sent to Recruitly, e.g. "30 Sep 2026".
+ */
+sent_to_recruitly: string | null, 
+/**
+ * Sent into the linked job's pipeline, not only as a candidate.
+ */
+in_recruitly_pipeline: boolean, };
