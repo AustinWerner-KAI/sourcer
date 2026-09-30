@@ -16,6 +16,12 @@ import type { CandidateRow } from "./types/CandidateRow";
 import type { CandidateTab } from "./types/CandidateTab";
 import type { CandidatesView } from "./types/CandidatesView";
 import type { Decision } from "./types/Decision";
+import type { RecruitlyStatus } from "./types/RecruitlyStatus";
+import type { RecruitlyTest } from "./types/RecruitlyTest";
+import type { RecruitlyJob } from "./types/RecruitlyJob";
+import type { JobPreview } from "./types/JobPreview";
+import type { ImportRole } from "./types/ImportRole";
+import type { HandoverResult } from "./types/HandoverResult";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -36,19 +42,22 @@ async function send<T>(method: string, path: string, body: unknown): Promise<T> 
     body: JSON.stringify(body),
   });
   if (res.status === 401) throw new SignedOut();
-  if (!res.ok) {
-    // Our own refusals carry a message written for people.
-    const text = [400, 403, 404, 409, 429, 502, 503].includes(res.status) ? await res.text() : "";
-    if (!text && res.status === 403) throw new Error("Only an active admin can do this.");
-    throw new Error(text || `Something went wrong (${res.status}). Please try again.`);
-  }
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
+}
+
+/** The server's own message when it gave one, else a plain one. */
+async function failure(res: Response): Promise<Error> {
+  // Our own refusals carry a message written for people.
+  const text = [400, 403, 404, 409, 429, 502, 503].includes(res.status) ? await res.text() : "";
+  if (!text && res.status === 403) return new Error("Only an active admin can do this.");
+  return new Error(text || `Something went wrong (${res.status}). Please try again.`);
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { credentials: "include" });
   if (res.status === 401) throw new SignedOut();
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
 
@@ -88,6 +97,18 @@ export const api = {
   rankNow: (id: string) => send<CandidatesView>("POST", `/api/roles/${id}/candidates/rank`, {}),
   /** `version` is the one the screen showed, so two people cannot overwrite each other. */
   decide: (candidacy: string, d: Decision) => send<CandidateRow>("POST", `/api/candidates/${candidacy}/decide`, d),
+
+  recruitlyStatus: () => get<RecruitlyStatus>("/api/recruitly/status"),
+  recruitlyTest: () => send<RecruitlyTest>("POST", "/api/recruitly/test", {}),
+  recruitlyJobs: (q: string) => get<RecruitlyJob[]>(`/api/recruitly/jobs?q=${encodeURIComponent(q)}`),
+  recruitlyJob: (jobId: string) => get<JobPreview>(`/api/recruitly/jobs/${encodeURIComponent(jobId)}`),
+  importRole: (r: ImportRole) => send<RoleDetail>("POST", "/api/roles/from-recruitly", r),
+  linkJob: (roleId: string, jobId: string | null) =>
+    send<RoleDetail>("PUT", `/api/roles/${roleId}/recruitly`, { job_id: jobId }),
+  recruitlyCheck: (candidacy: string) => send<CandidateRow>("POST", `/api/candidates/${candidacy}/recruitly-check`, {}),
+  /** `confirmed` holds the keys of the questions the resourcer has said yes to. */
+  handover: (candidacy: string, confirmed: string[]) =>
+    send<HandoverResult>("POST", `/api/candidates/${candidacy}/handover`, { confirmed }),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {
