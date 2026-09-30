@@ -167,7 +167,25 @@ pub struct BriefTool {
     pub status: Option<ToolStatus>,
 }
 
-/// The five-line check (SRS F3), as the resourcer edits it.
+/// How much a domain counts. `Must` narrows the search; `Plus` only lifts
+/// the ranking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum DomainWeight {
+    Must,
+    Plus,
+}
+
+/// An area of the business the person should know, e.g. "Digital asset custody".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct BriefDomain {
+    pub name: String,
+    pub weight: DomainWeight,
+}
+
+/// The brief check (SRS F3), as the resourcer edits it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export, export_to = "../../web/src/api/types/")]
 pub struct BriefLines {
@@ -177,12 +195,16 @@ pub struct BriefLines {
     pub excluded_titles: Vec<String>,
     /// 2. Up to three, most important first.
     pub must_haves: Vec<String>,
-    /// 3. Every tool the spec names.
+    /// 3. Functional and soft skills. Used to rank and explain, never to filter.
+    pub capabilities: Vec<String>,
+    /// 4. Areas of the business the person should know.
+    pub domains: Vec<BriefDomain>,
+    /// 5. Every tool the spec names.
     pub tools: Vec<BriefTool>,
-    /// 4. Cities, and whether remote counts.
+    /// 6. Cities, and whether remote counts.
     pub locations: Vec<String>,
     pub remote: bool,
-    /// 5. Kinds of employer to search, and companies to leave out.
+    /// 7. Kinds of employer to search, and companies to leave out.
     pub employer_types: Vec<String>,
     pub leave_out: Vec<String>,
 }

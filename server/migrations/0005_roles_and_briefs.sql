@@ -1,4 +1,4 @@
--- Sprint 2: roles, job specs and the five-line brief (SRS F2, F3, F4, F8).
+-- Sprint 2: roles, job specs and the brief (SRS F2, F3, F4, F8).
 
 -- The job spec as pasted or uploaded. Sent to the AI provider only to draft
 -- the brief; never contains candidate data.
@@ -31,6 +31,11 @@ ALTER TABLE candidacy ADD COLUMN employer_unknown boolean NOT NULL DEFAULT false
 ALTER TABLE brief ALTER COLUMN level TYPE jsonb
     USING CASE WHEN trim(level) = '' THEN '[]'::jsonb ELSE jsonb_build_array(level) END;
 ALTER TABLE brief RENAME COLUMN level TO levels;
+-- Functional and soft skills, used to rank and explain matches, never to
+-- filter. Domains are {name, weight}: "must" narrows the search, "plus" only
+-- lifts the ranking.
+ALTER TABLE brief ADD COLUMN capabilities jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE brief ADD COLUMN domains jsonb NOT NULL DEFAULT '[]';
 -- Titles never searched ("Director", "VP", ...).
 ALTER TABLE brief ADD COLUMN excluded_titles jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE brief ADD COLUMN remote boolean NOT NULL DEFAULT false;
