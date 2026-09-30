@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
 import type { BriefLines } from "../api/types/BriefLines";
@@ -412,13 +412,18 @@ export function BriefEditor() {
               <div className="foot">
                 <div className="cost">
                   {confirmed ? (
-                    <>Search comes next: count the matches for <strong>1 credit</strong>, then choose how many to pull.</>
+                    <>Next: count the matches, then choose how many to pull.</>
                   ) : issues.length > 0 ? (
                     <span className="warn">{issues.join(" ")}</span>
                   ) : (
-                    <>Ready. Next: count the matches for <strong>1 credit</strong>.</>
+                    <>Ready to confirm. Then count the matches.</>
                   )}
                 </div>
+                {confirmed && (
+                  <Link className="btn-primary btn-inline" to={`/brief/${id}/search`}>
+                    Go to search
+                  </Link>
+                )}
                 {!confirmed && (
                   <div className="actions-row">
                     <button className="link-button" onClick={() => run(() => save.mutate(lines))} disabled={busy || !dirty}>

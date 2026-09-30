@@ -132,3 +132,34 @@ ol.must .w { margin-left: auto; font-size: 12px; color: var(--muted); }
 .cost strong { color: var(--text); }
 .cost .warn { color: var(--warn); }
 .team a { color: var(--text); }
+
+/* Search */
+.search-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.search-grid .full { grid-column: 1 / -1; }
+@media (max-width: 1100px) { .search-grid { grid-template-columns: 1fr; } }
+.notice.warn-notice { background: rgba(255, 155, 115, 0.1); color: var(--warn); }
+.grp { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gold); margin: 14px 0 6px; }
+.grp.dim { color: var(--muted); }
+dl.q { display: grid; grid-template-columns: 130px 1fr; gap: 8px 14px; font-size: 13.5px; margin: 6px 0 14px; }
+dl.q dt { color: var(--muted); }
+dl.q dd { margin: 0; color: var(--text-2); }
+dl.q dd b { color: var(--text); font-weight: 500; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.total { font-size: 13.5px; color: var(--text-2); }
+.total strong { color: var(--text); }
+.count { display: grid; grid-template-columns: 1fr auto auto; gap: 10px 16px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.count .l { color: var(--text-2); }
+.count .n { font-family: var(--display); font-size: 22px; color: var(--text); }
+.seg.pick button { min-height: 34px; padding: 6px 14px; font-size: 13px; }
+.seg button:disabled { cursor: default; opacity: 0.6; }
+.meta, .panel p.meta { font-size: 12.5px; color: var(--muted); margin: 0 0 6px; }
+.note, .panel p.note { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 6px 0 16px; }
+@media (max-width: 900px) { .stats { grid-template-columns: 1fr 1fr; } }
+.stat { padding: 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.stat .v { font-family: var(--display); font-size: 24px; }
+.stat .k { font-size: 12.5px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+.stat.warn .v { color: var(--warn); }
+.prog { height: 6px; border-radius: 3px; background: var(--surface-2); margin: 10px 0 6px; overflow: hidden; }
+.prog i { display: block; height: 100%; background: var(--gold); transition: width 0.3s; }
+.later, .panel p.later { font-size: 13px; color: var(--muted); }
