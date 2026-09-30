@@ -214,6 +214,11 @@ dl.q dd b { color: var(--text); font-weight: 500; }
 .cand .rowerr, .panel .cand .rowerr { grid-column: 2 / -1; margin: 0; }
 .cand.blocked .nm { color: var(--text-2); }
 
+/* Chrome button */
+ol.steps-list { margin: 0; padding-left: 20px; color: var(--text-2); font-size: 14px; line-height: 1.7; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
+.panel p.addr { margin: 8px 0 0 20px; }
+
 /* Phones: the sidebar becomes a top bar. */
 @media (max-width: 768px) {
   .shell { flex-direction: column; }

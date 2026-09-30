@@ -470,6 +470,28 @@ pub struct Decision {
     pub version: i32,
 }
 
+/// A LinkedIn profile the resourcer is viewing, saved to a role (SRS F10).
+/// Filled in from the page when they click the Save button, then checked by them.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct SaveProfile {
+    pub role_id: uuid::Uuid,
+    /// The profile address, e.g. "https://www.linkedin.com/in/someone/".
+    pub linkedin_url: String,
+    pub name: String,
+    pub title: Option<String>,
+    pub employer: Option<String>,
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct SavedProfile {
+    /// False when the person was already on this role.
+    pub added: bool,
+    pub candidate: CandidateRow,
+}
+
 #[cfg(test)]
 mod tests {
     use super::CandidacyState::*;
