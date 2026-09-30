@@ -30,6 +30,9 @@ pub struct PersonRecord {
     /// Phone numbers, when the plan unlocks them.
     #[serde(default)]
     pub phones: Vec<String>,
+    /// Skills as the provider lists them. Used only to rank.
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
