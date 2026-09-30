@@ -261,6 +261,16 @@ pub struct RoleDetail {
     /// Companies whose staff are always left out of this role: the hiring
     /// client and every off-limits client. Cannot be removed.
     pub locked_out: Vec<LockedOut>,
+    /// The Recruitly job this role came from or is linked to.
+    pub recruitly_job: Option<RecruitlyLink>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RecruitlyLink {
+    pub id: String,
+    /// e.g. "Senior IAM Engineer (J-1042)".
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -416,6 +426,10 @@ pub struct CandidatesView {
     pub rank_blocked: Option<String>,
     /// Best first. At most `MAX_LISTED` people.
     pub people: Vec<CandidateRow>,
+    /// Recruitly is set up: shortlisted people are checked there and can be sent over.
+    pub recruitly: bool,
+    /// Where people sent to Recruitly land, if the role is linked to a job.
+    pub recruitly_job: Option<RecruitlyLink>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -448,6 +462,18 @@ pub struct CandidateRow {
     pub has_work_email: bool,
     pub has_phone: bool,
     pub reject_reason: Option<ReasonCode>,
+    /// What Recruitly knows about them, in words. `None` when not checked or not there.
+    pub recruitly_note: Option<String>,
+    pub recruitly_checked: bool,
+    /// The last check could not reach Recruitly.
+    pub recruitly_check_failed: bool,
+    /// Seconds since 1970 of the last check, for "checked 2 hours ago".
+    #[ts(type = "number | null")]
+    pub recruitly_checked_at: Option<i64>,
+    /// When they were sent to Recruitly, e.g. "30 Sep 2026".
+    pub sent_to_recruitly: Option<String>,
+    /// Sent into the linked job's pipeline, not only as a candidate.
+    pub in_recruitly_pipeline: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
@@ -490,6 +516,92 @@ pub struct SavedProfile {
     /// False when the person was already on this role.
     pub added: bool,
     pub candidate: CandidateRow,
+}
+
+/// Recruitly for the screens. The key itself never leaves the server.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RecruitlyStatus {
+    pub configured: bool,
+    #[ts(type = "number")]
+    pub calls_today: i64,
+    #[ts(type = "number")]
+    pub daily_cap: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RecruitlyTest {
+    /// The Recruitly user the key belongs to.
+    pub connected_as: String,
+}
+
+/// A job in Recruitly, to start a role from.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RecruitlyJob {
+    pub id: String,
+    pub title: String,
+    pub reference: Option<String>,
+    pub company: Option<String>,
+    pub status: Option<String>,
+    pub location: Option<String>,
+    /// The Sourcer role already made from this job.
+    pub role_id: Option<uuid::Uuid>,
+}
+
+/// A Recruitly job read into the new-role form. Nothing is saved yet.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct JobPreview {
+    pub id: String,
+    pub label: String,
+    pub title: String,
+    /// The description as plain text, with location and pay added.
+    pub spec_text: String,
+    pub company_name: Option<String>,
+    pub company_domain: Option<String>,
+    /// The Sourcer client that matches the Recruitly company, if any.
+    pub client_id: Option<uuid::Uuid>,
+    /// The Sourcer role already made from this job.
+    pub role_id: Option<uuid::Uuid>,
+}
+
+/// Save a role started from a Recruitly job, after the resourcer checked the form.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct ImportRole {
+    pub job_id: String,
+    pub client_id: uuid::Uuid,
+    pub title: String,
+    pub spec_text: String,
+}
+
+/// Add a shortlisted person to Recruitly. `confirmed` holds the keys of the
+/// questions the resourcer has said yes to (see `HandoverResult`).
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Handover {
+    #[serde(default)]
+    pub confirmed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct HandoverResult {
+    /// Set when done.
+    pub candidate: Option<CandidateRow>,
+    /// Set instead when the resourcer must say yes first, e.g. a colleague
+    /// owns them in Recruitly. Send `confirm_key` back in `confirmed`.
+    pub confirm: Option<String>,
+    pub confirm_key: Option<String>,
+}
+
+/// Link a role to a Recruitly job, or unlink it with `None`.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct LinkJob {
+    pub job_id: Option<String>,
 }
 
 #[cfg(test)]
