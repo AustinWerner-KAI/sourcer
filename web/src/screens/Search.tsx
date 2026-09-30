@@ -58,7 +58,10 @@ function choicesFor(total: number): number[] {
 export function Search() {
   const { id = "" } = useParams();
   const queryClient = useQueryClient();
-  const role = useQuery({ queryKey: ["role", id], queryFn: () => api.role(id) });
+  const role = useQuery({
+    queryKey: ["role", id],
+    queryFn: () => api.role(id),
+  });
   const search = useQuery({
     queryKey: ["search", id],
     queryFn: () => api.search(id),
@@ -68,12 +71,15 @@ export function Search() {
   });
   const [picks, setPicks] = useState<Record<string, number>>({});
   const [confirming, setConfirming] = useState(false);
+  // Counting again spends credits and clears the choices, so it asks first.
+  const [recounting, setRecounting] = useState(false);
 
   // A new count starts a fresh set of choices.
   const countId = search.data?.count?.id;
   useEffect(() => {
     setPicks({});
     setConfirming(false);
+    setRecounting(false);
   }, [countId]);
 
   useEffect(() => {
@@ -95,7 +101,10 @@ export function Search() {
     mutationFn: () =>
       api.pull(id, {
         count_id: countId ?? "",
-        picks: Object.entries(picks).map(([location, size]) => ({ location, size })),
+        picks: Object.entries(picks).map(([location, size]) => ({
+          location,
+          size,
+        })),
         confirmed: confirming,
         key: pullKey.get(),
       }),
@@ -116,15 +125,21 @@ export function Search() {
   const requested = Object.values(picks).reduce((a, b) => a + b, 0);
   const running = s.pull && !s.pull.done;
   const alreadyPulled = !!s.count && s.pull?.count_id === s.count.id;
-  const error = count.error ?? pull.error;
 
-  const pressPull = () => {
-    if (requested > CONFIRM_ABOVE && !confirming) {
-      setConfirming(true);
-      return;
-    }
-    pull.mutate();
+  const credits = s.locations.length;
+  const creditWord = `${credits} credit${credits === 1 ? "" : "s"}`;
+  // A fresh count is the main step; once one exists, counting again is secondary.
+  const countIsMain = !s.count || s.count.stale || alreadyPulled;
+  const doCount = () => {
+    setRecounting(false);
+    pull.reset();
+    count.mutate();
   };
+  const pressCount = () => (s.count && requested > 0 ? setRecounting(true) : doCount());
+  // Big pulls confirm with a separate button in a different place, so a
+  // double click on Pull cannot pass the check.
+  const pressPull = () => (requested > CONFIRM_ABOVE ? setConfirming(true) : pull.mutate());
+  const people = `${requested} ${requested === 1 ? "person" : "people"}`;
 
   return (
     <main>
@@ -158,26 +173,40 @@ export function Search() {
         <section className="panel">
           <h2 className="panel-title">What we will search</h2>
           <p className="panel-note">
-            {s.brief_version ? `From brief version ${s.brief_version}. ` : ""}Nothing is spent until you count.
+            {s.brief_version ? `From brief version ${s.brief_version}. ` : ""}
+            Nothing is spent until you count.
           </p>
           {lines && <Plan lines={lines} lockedOut={r.locked_out} />}
           <div className="bar">
             <span className="total">
-              One count per location: <strong>{s.locations.length} credit{s.locations.length === 1 ? "" : "s"}</strong>
+              One count per location: <strong>{creditWord}</strong>
             </span>
-            <button
-              className="btn-primary btn-inline"
-              onClick={() => {
-                pull.reset();
-                count.mutate();
-              }}
-              disabled={busy || !!s.blocked || !!running}
-            >
-              {count.isPending
-                ? "Counting"
-                : `${s.count ? "Count again" : "Count matches"} · ${s.locations.length} credit${s.locations.length === 1 ? "" : "s"}`}
-            </button>
+            {!recounting && (
+              <button
+                className={countIsMain ? "btn-primary btn-inline" : "btn-ghost"}
+                onClick={pressCount}
+                disabled={busy || !!s.blocked || !!running}
+              >
+                {count.isPending ? "Counting" : `${s.count ? "Count again" : "Count matches"} · ${creditWord}`}
+              </button>
+            )}
           </div>
+          {recounting && (
+            <div className="confirm" role="group" aria-label="Count again">
+              <p>
+                Counting again spends <strong>{creditWord}</strong> and clears the {people} you chose.
+              </p>
+              <span className="actions-row">
+                <button className="link-button" onClick={() => setRecounting(false)}>
+                  Keep my choices
+                </button>
+                <button className="btn-ghost" onClick={doCount} disabled={busy}>
+                  Count again · {creditWord}
+                </button>
+              </span>
+            </div>
+          )}
+          {count.error && <ErrorLine e={count.error} />}
         </section>
 
         {s.count && (
@@ -224,14 +253,18 @@ export function Search() {
                 ))}
                 <div className="bar">
                   <span className="total">
-                    Used this month: <strong>{s.credits_this_month} credits</strong>
+                    This month:{" "}
+                    <strong>
+                      {requested > 0
+                        ? `${s.credits_this_month} → ${s.credits_this_month + requested} credits`
+                        : `${s.credits_this_month} credits`}
+                    </strong>
                   </span>
-                  <span className="actions-row">
-                    {confirming && (
-                      <button className="link-button" onClick={() => setConfirming(false)}>
-                        Cancel
-                      </button>
-                    )}
+                  {confirming ? (
+                    <button className="link-button" onClick={() => setConfirming(false)}>
+                      Change my choices
+                    </button>
+                  ) : (
                     <button
                       className="btn-primary btn-inline"
                       onClick={pressPull}
@@ -241,15 +274,24 @@ export function Search() {
                         ? "Starting"
                         : requested === 0
                           ? "Choose how many to pull"
-                          : `${confirming ? "Confirm: pull" : "Pull"} ${requested} ${requested === 1 ? "person" : "people"} · ${requested} credits`}
+                          : `Pull ${people} · ${requested} credits`}
                     </button>
-                  </span>
+                  )}
                 </div>
-                <p className="note">
-                  {confirming
-                    ? `That is more than ${CONFIRM_ABOVE} people. Press again to confirm.`
-                    : `Over ${CONFIRM_ABOVE} people asks you to confirm once more.`}
-                </p>
+                {confirming ? (
+                  <div className="confirm" role="group" aria-label="Confirm the pull">
+                    <p>
+                      Pull <strong>{people}</strong> for <strong>{requested} credits</strong>? This month goes from{" "}
+                      {s.credits_this_month} to {s.credits_this_month + requested}.
+                    </p>
+                    <button className="btn-primary btn-inline" onClick={() => pull.mutate()} disabled={busy}>
+                      {pull.isPending ? "Starting" : `Yes, pull ${people}`}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="note">Over {CONFIRM_ABOVE} people asks you to confirm once more.</p>
+                )}
+                {pull.error && <ErrorLine e={pull.error} />}
               </>
             )}
           </section>
@@ -257,13 +299,15 @@ export function Search() {
 
         {s.pull && <PullResult p={s.pull} />}
       </div>
-
-      {error && (
-        <p className="form-error" role="alert">
-          {error.message}
-        </p>
-      )}
     </main>
+  );
+}
+
+function ErrorLine({ e }: { e: Error }) {
+  return (
+    <p className="form-error" role="alert">
+      {e.message}
+    </p>
   );
 }
 
@@ -348,7 +392,13 @@ function CountRow({
         <span className="l">{c.label}</span>
         <span className="n">{c.total.toLocaleString()}</span>
         <span className="seg pick" role="radiogroup" aria-label={`How many to pull in ${c.label}`}>
-          <button role="radio" aria-checked={value === 0} className={value === 0 ? "sel" : undefined} onClick={() => onChange(0)} disabled={disabled}>
+          <button
+            role="radio"
+            aria-checked={value === 0}
+            className={value === 0 ? "sel" : undefined}
+            onClick={() => onChange(0)}
+            disabled={disabled}
+          >
             Skip
           </button>
           {choices.map((n) => (
@@ -368,7 +418,11 @@ function CountRow({
       {c.total === 0 && (
         <p className="note">No one matched here. Try moving a domain from Must to Plus, or adding a location.</p>
       )}
-      {c.total > 0 && c.total <= SIZES[0] && <p className="note">{c.label} is small, so all {c.total} is the only size.</p>}
+      {c.total > 0 && c.total <= SIZES[0] && (
+        <p className="note">
+          {c.label} is small, so all {c.total} is the only size.
+        </p>
+      )}
     </>
   );
 }
@@ -385,8 +439,8 @@ function PullResult({ p }: { p: PullView }) {
           <i style={{ width: `${pct}%` }} />
         </div>
         <p className="note">
-          {p.locations_done} of {p.locations} location{p.locations === 1 ? "" : "s"} done. You can leave this page; it carries on
-          and shows here when done.
+          {p.locations_done} of {p.locations} location
+          {p.locations === 1 ? "" : "s"} done. You can leave this page; it carries on and shows here when done.
         </p>
       </section>
     );
@@ -394,20 +448,19 @@ function PullResult({ p }: { p: PullView }) {
   return (
     <section className="panel full">
       <h2 className="panel-title">Search done</h2>
-      {p.failed && (
-        <p className="warnline">
-          A location could not be pulled after several tries. Count again to retry; people already found are skipped.
-        </p>
-      )}
+      {p.failed && <Failed p={p} />}
       <div className="stats">
         <div className="stat">
           <div className="v">{p.pulled}</div>
-          <div className="k">Pulled, {p.credits_used} credits used</div>
+          <div className="k">
+            Pulled · {p.credits_used} credit{p.credits_used === 1 ? "" : "s"} used in total
+          </div>
         </div>
         <div className="stat">
           <div className="v">{p.new_candidates}</div>
           <div className="k">
-            New for this role{p.already > 0 ? ` · ${p.already} ${p.already === 1 ? "was" : "were"} already on it` : ""}
+            New for this role
+            {p.already > 0 ? ` · ${p.already} ${p.already === 1 ? "was" : "were"} already on it` : ""}
           </div>
         </div>
         <div className="stat">
@@ -421,5 +474,23 @@ function PullResult({ p }: { p: PullView }) {
       </div>
       <p className="later">Ranking and the Candidates list come next sprint. Pressing twice never charges twice.</p>
     </section>
+  );
+}
+
+/** Says which location failed and what its credits paid for. */
+function Failed({ p }: { p: PullView }) {
+  const where = p.failed_locations.join(" and ") || "One location";
+  const saved = p.credits_used - p.credits_unsaved;
+  return (
+    <div className="failbox" role="alert">
+      <strong>{where} could not be pulled after several tries.</strong>
+      <p>
+        {p.credits_used} credits in total: {saved} for the {p.pulled} people pulled
+        {p.credits_unsaved > 0
+          ? `, and ${p.credits_unsaved} charged for ${where} before it failed. Those people were not saved.`
+          : `. Nothing was charged for ${where}.`}
+      </p>
+      <p>To retry, count again above. People already found for this role are skipped, so you only pay for new ones.</p>
+    </div>
   );
 }

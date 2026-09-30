@@ -163,3 +163,29 @@ dl.q dd b { color: var(--text); font-weight: 500; }
 .prog { height: 6px; border-radius: 3px; background: var(--surface-2); margin: 10px 0 6px; overflow: hidden; }
 .prog i { display: block; height: 100%; background: var(--gold); transition: width 0.3s; }
 .later, .panel p.later { font-size: 13px; color: var(--muted); }
+.confirm { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; margin-top: 14px; padding: 14px 16px; border: 1px solid rgba(255, 209, 0, 0.35); border-radius: var(--radius); background: var(--gold-soft); }
+.confirm p, .panel .confirm p { flex: 1 1 240px; margin: 0; font-size: 13.5px; color: var(--text-2); }
+.confirm strong { color: var(--text); }
+.confirm .link-button { margin-top: 0; }
+.bar .link-button { margin-top: 0; }
+.failbox { margin: 0 0 16px; padding: 14px 16px; border-radius: var(--radius); background: rgba(255, 155, 115, 0.1); color: var(--warn); font-size: 13.5px; line-height: 1.5; }
+.failbox p, .panel .failbox p { margin: 6px 0 0; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .prog i { transition: none; } }
+
+/* Phones: the sidebar becomes a top bar. */
+@media (max-width: 768px) {
+  .shell { flex-direction: column; }
+  .nav { width: auto; padding: 14px 16px; gap: 12px; border-right: 0; border-bottom: 1px solid var(--line); background: var(--bg); }
+  .nav-links { flex-direction: row; overflow-x: auto; gap: 2px; margin: 0 -4px; }
+  .nav-links a { padding: 8px 12px; white-space: nowrap; font-size: 14px; }
+  .user { margin-top: 0; padding: 0; border-top: 0; display: flex; align-items: center; gap: 12px; }
+  .user .link-button { margin: 0 0 0 auto; }
+  .status { display: none; }
+  main { min-width: 0; padding: 20px 16px; }
+  h1 { font-size: 24px; }
+  dl.q { grid-template-columns: 96px 1fr; }
+  .count { grid-template-columns: 1fr auto; }
+  .count .seg.pick { grid-column: 1 / -1; justify-self: start; }
+  .stats { grid-template-columns: 1fr; }
+  .steps { flex-wrap: wrap; }
+}

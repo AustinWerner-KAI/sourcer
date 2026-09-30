@@ -16,4 +16,13 @@ left_out: number, unknown_employer: number, credits_used: number, locations: num
 /**
  * A location could not be pulled after several tries.
  */
-failed: boolean, };
+failed: boolean, 
+/**
+ * Which locations failed, by name.
+ */
+failed_locations: Array<string>, 
+/**
+ * Credits paid for people who were never saved (a location failed after
+ * the provider charged). Already counted in credits_used.
+ */
+credits_unsaved: number, };
