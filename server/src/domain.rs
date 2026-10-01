@@ -487,6 +487,8 @@ pub struct CandidateRow {
     /// Work email, personal emails and phones, work first. Empty for anyone
     /// who must not be contacted.
     pub contacts: Vec<ContactLine>,
+    /// The latest CV assessment for this role, out of 10.
+    pub cv_score: Option<i32>,
     pub reject_reason: Option<ReasonCode>,
     /// What Recruitly knows about them, in words. `None` when not checked or not there.
     pub recruitly_note: Option<String>,
