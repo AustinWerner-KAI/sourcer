@@ -192,6 +192,7 @@ fn confirming(tool_status: Option<&str>, based_on: Option<i64>) -> Value {
 
 fn lines(tool_status: Option<&str>) -> Value {
     json!({
+        "titles": ["Security Engineer"], "min_years": 5,
         "levels": ["Senior", "Lead"], "excluded_titles": ["Director"],
         "must_haves": ["Cloud security", "IAM"],
         "capabilities": ["Stakeholder management"],
