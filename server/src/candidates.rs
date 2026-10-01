@@ -29,8 +29,8 @@ use crate::{
     auth::CurrentUser,
     crm,
     domain::{
-        CandidacyState, CandidateRow, CandidateTab, CandidatesView, Decision, DecisionAction,
-        ReasonCode, RecruitlyLink,
+        CandidacyState, CandidateRow, CandidateTab, CandidatesView, ContactKind, ContactLine,
+        Decision, DecisionAction, ReasonCode, RecruitlyLink,
     },
     employer::{self, Verdict},
     jobs,
@@ -285,6 +285,7 @@ struct Row {
     reason: Option<ReasonCode>,
     has_email: bool,
     has_phone: bool,
+    contacts: Vec<String>,
     dnc: bool,
     other_state: Option<String>,
     other_title: Option<String>,
@@ -303,6 +304,9 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
        p.location, p.linkedin_url, c.tier, c.rank, c.evidence, c.employer_unknown, c.reason,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'work_email') AS has_email,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone') AS has_phone,
+       ARRAY(SELECT k.kind::text || ':' || k.value FROM contact k
+             WHERE k.person_id = p.id AND k.org_id = c.org_id
+             ORDER BY k.kind, k.created_at LIMIT 6) AS contacts,
        (p.opted_out OR p.recruitly_dnc OR EXISTS (
           SELECT 1 FROM do_not_contact d
           WHERE d.org_id = c.org_id AND (
@@ -358,6 +362,19 @@ fn known(
     }
 }
 
+/// "kind:value" pairs from the database, in order, unknown kinds dropped.
+fn contact_lines(raw: &[String]) -> Vec<ContactLine> {
+    raw.iter()
+        .filter_map(|s| {
+            let (kind, value) = s.split_once(':')?;
+            Some(ContactLine {
+                kind: ContactKind::parse(kind)?,
+                value: value.to_string(),
+            })
+        })
+        .collect()
+}
+
 impl From<Row> for CandidateRow {
     fn from(r: Row) -> Self {
         let evidence = r.evidence.unwrap_or_default();
@@ -392,6 +409,11 @@ impl From<Row> for CandidateRow {
             employer_unknown: r.employer_unknown,
             has_work_email: r.has_email,
             has_phone: r.has_phone,
+            contacts: if r.dnc {
+                Vec::new()
+            } else {
+                contact_lines(&r.contacts)
+            },
             reject_reason: r.reason,
             recruitly_note: r.recruitly_note,
             recruitly_checked: r.recruitly_checked_at.is_some(),
