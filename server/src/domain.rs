@@ -527,6 +527,8 @@ pub struct RecruitlyStatus {
     pub calls_today: i64,
     #[ts(type = "number")]
     pub daily_cap: i64,
+    /// Whether Recruitly answered the key recently. `None` when not set up or not yet known.
+    pub connected: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

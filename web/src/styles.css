@@ -11,6 +11,7 @@
   --gold-soft: rgba(255, 209, 0, 0.12);
   --warn: #ff9b73;
   --stop: #ff7a7a;
+  --ok: #5fd38a;
   --font: "Space Grotesk", system-ui, sans-serif;
   --display: "Unbounded", "Space Grotesk", sans-serif;
   --radius: 10px;
@@ -31,6 +32,11 @@ button { font-family: inherit; cursor: pointer; }
 .nav-links a.active { background: var(--gold-soft); color: var(--gold); font-weight: 600; }
 .status { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; color: var(--muted); }
 .status strong { display: block; font-size: 14px; color: var(--text); margin-top: 4px; }
+.statuses { display: flex; flex-direction: column; gap: 8px; }
+.light { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 8px 1px 0; vertical-align: middle; }
+.light.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(95, 211, 138, 0.18); }
+.light.off { background: var(--stop); box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.18); }
+.light.idle { background: var(--muted); }
 
 main { flex: 1; padding: 36px 48px; display: flex; flex-direction: column; gap: 24px; }
 .eyebrow { font-size: 13px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
@@ -259,7 +265,7 @@ ul.joblist { list-style: none; margin: 14px 0 0; padding: 0; }
   .nav-links a { padding: 8px 12px; white-space: nowrap; font-size: 14px; }
   .user { margin-top: 0; padding: 0; border-top: 0; display: flex; align-items: center; gap: 12px; }
   .user .link-button { margin: 0 0 0 auto; }
-  .status { display: none; }
+  .statuses { display: none; }
   main { min-width: 0; padding: 20px 16px; }
   h1 { font-size: 24px; }
   dl.q { grid-template-columns: 96px 1fr; }

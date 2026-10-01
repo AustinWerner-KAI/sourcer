@@ -44,9 +44,22 @@ const screens = [
   { path: "/playbook", label: "Playbook", note: "Rules learned from your feedback, waiting for approval or active." },
 ];
 
+/** Green when connected, red when not, grey when unknown. The words beside it say which. */
+function Light({ on }: { on: boolean | null }) {
+  return <span className={`light ${on === null ? "idle" : on ? "on" : "off"}`} aria-hidden="true" />;
+}
+
 export function App() {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30_000 });
+  // Read every five minutes; the server calls Recruitly at most once in ten.
+  const recruitly = useQuery({
+    queryKey: ["recruitly-status"],
+    queryFn: api.recruitlyStatus,
+    enabled: Boolean(me.data),
+    refetchInterval: 300_000,
+    staleTime: 60_000,
+  });
   const queryClient = useQueryClient();
   // A role's candidates live under /brief/:id but belong to Candidates in the menu.
   const onCandidates = /^\/brief\/[^/]+\/candidates/.test(useLocation().pathname);
@@ -94,17 +107,35 @@ export function App() {
             Sign out
           </button>
         </div>
-        <div className="status" role="status">
-          Server
-          <strong>
-            {health.isLoading
-              ? "Checking"
-              : !health.data
-                ? "Not reachable"
-                : health.data.database
-                  ? `Connected · v${health.data.version}`
-                  : "Database down"}
-          </strong>
+        <div className="statuses">
+          <div className="status" role="status">
+            Server{health.data ? ` · v${health.data.version}` : ""}
+            <strong>
+              <Light on={health.isLoading ? null : Boolean(health.data?.database)} />
+              {health.isLoading
+                ? "Checking"
+                : !health.data
+                  ? "Not reachable"
+                  : health.data.database
+                    ? "Connected"
+                    : "Database down"}
+            </strong>
+          </div>
+          {recruitly.data && (
+            <div className="status" role="status">
+              Recruitly
+              <strong>
+                <Light on={recruitly.data.configured ? recruitly.data.connected : null} />
+                {!recruitly.data.configured
+                  ? "Not set up"
+                  : recruitly.data.connected === null
+                    ? "Not checked"
+                    : recruitly.data.connected
+                      ? "Connected"
+                      : "Not connected"}
+              </strong>
+            </div>
+          )}
         </div>
       </nav>
       <Routes>

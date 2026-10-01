@@ -71,6 +71,8 @@ pub struct Recruitly {
     api_key: Option<String>,
     base_url: String,
     pub daily_cap: i64,
+    /// When Recruitly last answered, and whether it accepted the key.
+    last_seen: std::sync::Mutex<Option<(std::time::Instant, bool)>>,
 }
 
 impl Recruitly {
@@ -90,7 +92,20 @@ impl Recruitly {
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
             daily_cap: daily_cap.unwrap_or(DEFAULT_DAILY_CAP).max(0),
+            last_seen: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Whether Recruitly accepted the key, if it answered within `within`.
+    pub fn seen_within(&self, within: Duration) -> Option<bool> {
+        let last = *self.last_seen.lock().unwrap_or_else(|e| e.into_inner());
+        last.filter(|(at, _)| at.elapsed() < within)
+            .map(|(_, ok)| ok)
+    }
+
+    fn seen(&self, ok: bool) {
+        *self.last_seen.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((std::time::Instant::now(), ok));
     }
 
     pub fn configured(&self) -> bool {
@@ -176,11 +191,16 @@ impl Session<'_> {
             req = req.json(b);
         }
         // Never keep the address: it holds the key.
-        let res = req
-            .send()
-            .await
-            .map_err(|e| RecruitlyError::Network(e.without_url().to_string()))?;
+        let res = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                self.rc.seen(false);
+                return Err(RecruitlyError::Network(e.without_url().to_string()));
+            }
+        };
         let status = res.status().as_u16();
+        // Connected unless the key was refused or Recruitly itself failed.
+        self.rc.seen(!matches!(status, 401 | 403) && status < 500);
         let text = res
             .text()
             .await

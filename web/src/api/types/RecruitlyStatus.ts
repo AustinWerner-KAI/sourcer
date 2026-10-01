@@ -3,4 +3,8 @@
 /**
  * Recruitly for the screens. The key itself never leaves the server.
  */
-export type RecruitlyStatus = { configured: boolean, calls_today: number, daily_cap: number, };
+export type RecruitlyStatus = { configured: boolean, calls_today: number, daily_cap: number, 
+/**
+ * Whether Recruitly answered the key recently. `None` when not set up or not yet known.
+ */
+connected: boolean | null, };
