@@ -55,8 +55,10 @@ fn phrase(field: &str, text: &str) -> Value {
     json!({"match_phrase": {field: text.to_lowercase()}})
 }
 
+/// At least one of the clauses. PDL refuses `minimum_should_match`, but a
+/// bool with only `should` clauses already needs one of them to match.
 fn any_of(clauses: Vec<Value>) -> Value {
-    json!({"bool": {"should": clauses, "minimum_should_match": 1}})
+    json!({"bool": {"should": clauses}})
 }
 
 /// A word or phrase anywhere a person describes their work.
@@ -357,6 +359,57 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label, ANYWHERE);
         assert!(!text(&p[0].query).contains("location_name"));
+    }
+
+    /// Every key PDL accepts in a query. Anything else (such as
+    /// `minimum_should_match` or `boost`) is refused with a 400.
+    fn only_pdl_clauses(v: &Value, path: &str) {
+        const QUERIES: [&str; 10] = [
+            "term",
+            "terms",
+            "exists",
+            "bool",
+            "match",
+            "range",
+            "match_phrase",
+            "wildcard",
+            "prefix",
+            "match_all",
+        ];
+        const BOOL: [&str; 4] = ["must", "must_not", "should", "filter"];
+        let obj = v
+            .as_object()
+            .unwrap_or_else(|| panic!("{path} is not a query"));
+        for (k, inner) in obj {
+            assert!(
+                QUERIES.contains(&k.as_str()),
+                "{path}.{k} is not allowed by PDL"
+            );
+            if k == "bool" {
+                for (clause, list) in inner.as_object().unwrap() {
+                    assert!(
+                        BOOL.contains(&clause.as_str()),
+                        "{path}.bool.{clause} is not allowed by PDL"
+                    );
+                    for (i, q) in list.as_array().unwrap().iter().enumerate() {
+                        only_pdl_clauses(q, &format!("{path}.bool.{clause}[{i}]"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_search_uses_only_what_pdl_accepts() {
+        for s in plan(&brief(), &[client()]) {
+            only_pdl_clauses(&s.query, &s.label);
+        }
+        let mut remote = brief();
+        remote.locations.clear();
+        remote.remote = true;
+        for s in plan(&remote, &[]) {
+            only_pdl_clauses(&s.query, &s.label);
+        }
     }
 
     #[test]
