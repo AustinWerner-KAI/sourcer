@@ -199,6 +199,10 @@ pub fn spec_from(job: &Job) -> String {
         .unwrap_or_default();
     let facts: Vec<String> = [
         job.location.as_ref().map(|l| format!("Location: {l}")),
+        job.remote.then(|| "Remote working: yes".to_string()),
+        job.experience.as_ref().map(|e| format!("Level: {e}")),
+        job.employment.as_ref().map(|e| format!("Type: {e}")),
+        (!job.skills.is_empty()).then(|| format!("Skills: {}", job.skills.join(", "))),
         job.pay.as_ref().map(|p| format!("Pay: {p}")),
         job.reference
             .as_ref()
@@ -1203,11 +1207,15 @@ mod tests {
             company_name: None,
             description: Some("<p>Lead IAM.</p>".into()),
             location: Some("Dubai".into()),
-            pay: Some("30000 to 40000 AED Monthly".into()),
+            pay: Some("30,000 to 40,000 AED monthly".into()),
+            experience: Some("Senior Level".into()),
+            employment: Some("Permanent".into()),
+            remote: false,
+            skills: vec!["IAM".into(), "Okta".into()],
         };
         assert_eq!(
             spec_from(&job),
-            "Lead IAM.\n\nLocation: Dubai\nPay: 30000 to 40000 AED Monthly\nRecruitly job: J-1042"
+            "Lead IAM.\n\nLocation: Dubai\nLevel: Senior Level\nType: Permanent\nSkills: IAM, Okta\nPay: 30,000 to 40,000 AED monthly\nRecruitly job: J-1042"
         );
         assert_eq!(job_label(&job), "Senior IAM Engineer (J-1042)");
     }
