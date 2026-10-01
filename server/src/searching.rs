@@ -63,55 +63,20 @@ struct Counted {
     query: Value,
 }
 
-type BriefRow = (
-    Uuid,
-    i32,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<crate::domain::BriefDomain>>,
-    SqlJson<Vec<crate::domain::BriefTool>>,
-    SqlJson<Vec<String>>,
-    bool,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-);
-
-const BRIEF_SELECT: &str = "SELECT id, version, levels, excluded_titles, must_haves, capabilities,
-        domains, tools, locations, remote, employer_types, leave_out FROM brief";
-
-fn brief_of(r: BriefRow) -> (Uuid, i32, BriefLines) {
-    (
-        r.0,
-        r.1,
-        BriefLines {
-            levels: r.2 .0,
-            excluded_titles: r.3 .0,
-            must_haves: r.4 .0,
-            capabilities: r.5 .0,
-            domains: r.6 .0,
-            tools: r.7 .0,
-            locations: r.8 .0,
-            remote: r.9,
-            employer_types: r.10 .0,
-            leave_out: r.11 .0,
-        },
-    )
-}
-
 /// The role's latest confirmed brief: (id, version, lines).
 pub(crate) async fn confirmed_brief(
     pool: &PgPool,
     role_id: Uuid,
 ) -> anyhow::Result<Option<(Uuid, i32, BriefLines)>> {
-    let row: Option<BriefRow> = sqlx::query_as(&format!(
-        "{BRIEF_SELECT} WHERE role_id = $1 AND confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1"
+    let row: Option<crate::roles::BriefRow> = sqlx::query_as(&format!(
+        "SELECT {} FROM brief
+         WHERE role_id = $1 AND confirmed_at IS NOT NULL ORDER BY version DESC LIMIT 1",
+        crate::roles::BRIEF_COLUMNS
     ))
     .bind(role_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(brief_of))
+    Ok(row.map(crate::roles::BriefRow::lines))
 }
 
 /// Why this role cannot be searched right now, if it cannot.
@@ -642,13 +607,15 @@ impl<S: PeopleSource + 'static> JobHandler for PullHandler<S> {
                 serde_json::from_value(job.payload.clone()).context("bad pull payload")?;
             // Search with today's locked-out companies, not those at count
             // time, so a client marked off-limits since is never paid for.
-            let brief: BriefRow =
-                sqlx::query_as(&format!("{BRIEF_SELECT} WHERE id = $1 AND org_id = $2"))
-                    .bind(p.brief_id)
-                    .bind(job.org_id)
-                    .fetch_one(&self.pool)
-                    .await?;
-            let (_, _, lines) = brief_of(brief);
+            let brief: crate::roles::BriefRow = sqlx::query_as(&format!(
+                "SELECT {} FROM brief WHERE id = $1 AND org_id = $2",
+                crate::roles::BRIEF_COLUMNS
+            ))
+            .bind(p.brief_id)
+            .bind(job.org_id)
+            .fetch_one(&self.pool)
+            .await?;
+            let (_, _, lines) = brief.lines();
             let locked = employer::locked_out(&self.pool, job.org_id, p.role_id).await?;
             let base = plan::plan(&lines, &locked)
                 .into_iter()
