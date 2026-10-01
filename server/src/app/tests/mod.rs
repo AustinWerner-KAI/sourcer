@@ -283,12 +283,25 @@ async fn fake_ranker() -> (String, Bodies) {
                 seen.lock().unwrap().push(body.clone());
                 let text = body["messages"][0]["content"].as_str().unwrap().to_string();
                 let n = text.matches("\"id\": \"c").count();
+                // One verdict per checklist item, as Claude is asked to give.
+                let brief: Value = serde_json::from_str(
+                    text.split("<brief>\n")
+                        .nth(1)
+                        .unwrap()
+                        .split("\n</brief>")
+                        .next()
+                        .unwrap(),
+                )
+                .unwrap();
+                let items = brief["checklist"].as_array().unwrap().len();
                 let candidates: Vec<Value> = (1..=n)
                     .map(|i| {
                         let tier = ["A", "B"].get(i - 1).copied().unwrap_or("C");
+                        let verdict = ["met", "partly"].get(i - 1).copied().unwrap_or("not_shown");
                         json!({"id": format!("c{i}"), "tier": tier, "score": 100 - i as i64,
                                "reason": format!("Evidence {i} with **IAM**."),
-                               "unknowns": ["Python or Go"]})
+                               "unknowns": ["Python or Go"],
+                               "checks": vec![verdict; items]})
                     })
                     .collect();
                 Json(
