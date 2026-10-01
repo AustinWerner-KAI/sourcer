@@ -27,9 +27,10 @@ use crate::{
     app::AppState,
     audit,
     auth::CurrentUser,
+    crm,
     domain::{
         CandidacyState, CandidateRow, CandidateTab, CandidatesView, Decision, DecisionAction,
-        ReasonCode,
+        ReasonCode, RecruitlyLink,
     },
     employer::{self, Verdict},
     jobs,
@@ -284,6 +285,11 @@ struct Row {
     other_state: Option<String>,
     other_title: Option<String>,
     last_out: Option<chrono::DateTime<chrono::Utc>>,
+    recruitly_note: Option<String>,
+    recruitly_checked_at: Option<chrono::DateTime<chrono::Utc>>,
+    recruitly_check_failed: bool,
+    sent_at: Option<chrono::DateTime<chrono::Utc>>,
+    in_pipeline: bool,
 }
 
 /// Everything the list shows, including the live known check. `{filter}` and
@@ -293,7 +299,7 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
        p.location, p.linkedin_url, c.tier, c.rank, c.evidence, c.employer_unknown, c.reason,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'work_email') AS has_email,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone') AS has_phone,
-       (p.opted_out OR EXISTS (
+       (p.opted_out OR p.recruitly_dnc OR EXISTS (
           SELECT 1 FROM do_not_contact d
           WHERE d.org_id = c.org_id AND (
             d.identifier = p.linkedin_url
@@ -301,9 +307,13 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
             OR d.identifier IN (SELECT regexp_replace(k.value, '[^0-9+]', '', 'g')
                                 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone')))
        ) AS dnc,
-       o.state::text AS other_state, o.title AS other_title, t.last_out
+       o.state::text AS other_state, o.title AS other_title, t.last_out,
+       p.recruitly_note, p.recruitly_checked_at,
+       p.recruitly_check_failed, h.done_at AS sent_at,
+       (h.done_at IS NOT NULL AND h.pipeline_id IS NOT NULL) AS in_pipeline
 FROM candidacy c
 JOIN person p ON p.id = c.person_id
+LEFT JOIN recruitly_handover h ON h.candidacy_id = c.id
 LEFT JOIN LATERAL (
   SELECT c2.state, r.title FROM candidacy c2 JOIN role r ON r.id = c2.role_id
   WHERE c2.person_id = c.person_id AND c2.role_id <> c.role_id
@@ -378,6 +388,12 @@ impl From<Row> for CandidateRow {
             has_work_email: r.has_email,
             has_phone: r.has_phone,
             reject_reason: r.reason,
+            recruitly_note: r.recruitly_note,
+            recruitly_checked: r.recruitly_checked_at.is_some(),
+            recruitly_check_failed: r.recruitly_check_failed,
+            recruitly_checked_at: r.recruitly_checked_at.map(|t| t.timestamp()),
+            sent_to_recruitly: r.sent_at.map(|t| t.format("%-d %b %Y").to_string()),
+            in_recruitly_pipeline: r.in_pipeline,
         }
     }
 }
@@ -451,6 +467,13 @@ async fn view(
     .bind(org_id)
     .fetch_one(pool)
     .await?;
+    let (job_id, job_label): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT recruitly_job_id, recruitly_job_label FROM role WHERE id = $1 AND org_id = $2",
+    )
+    .bind(role_id)
+    .bind(org_id)
+    .fetch_one(pool)
+    .await?;
     let ranking: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM job WHERE org_id = $1 AND kind = $2
                           AND status IN ('queued', 'running') AND payload->>'role_id' = $3)",
@@ -470,6 +493,11 @@ async fn view(
         ranking,
         rank_blocked: blocked.map(String::from),
         people: rows_for_role(pool, org_id, role_id, tab).await?,
+        recruitly: state.recruitly.configured(),
+        recruitly_job: job_id.map(|id| RecruitlyLink {
+            label: job_label.unwrap_or_else(|| id.clone()),
+            id,
+        }),
     })
 }
 
@@ -605,9 +633,27 @@ pub async fn decide(
             Ok(_) => {}
             Err(e) => return server_error(e),
         }
+        // Checked in Recruitly once, now, before any outreach. If Recruitly
+        // cannot be reached the shortlist still goes ahead, flagged unchecked.
+        if state.recruitly.configured() {
+            if let Err(e) = crm::check_person(
+                &pool,
+                &state.recruitly,
+                user.org_id,
+                Some(user.id),
+                person_id,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "Recruitly check failed");
+            }
+        }
         match one_row(&pool, user.org_id, candidacy).await {
             Ok(r) if r.do_not_contact => {
-                return refuse(StatusCode::CONFLICT, "On the do-not-contact list.")
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "On the do-not-contact list (here or in Recruitly).",
+                )
             }
             Ok(_) => {}
             Err(e) => return server_error(e),

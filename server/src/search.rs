@@ -360,20 +360,30 @@ async fn merge_people(
         .execute(&mut **tx)
         .await?;
     }
-    // An opt-out on either record stays an opt-out.
-    let (pdl_id, opted_out): (Option<String>, bool) = sqlx::query_as(
-        "DELETE FROM person WHERE id = $1 AND org_id = $2 RETURNING pdl_id, opted_out",
+    // An opt-out on either record stays an opt-out, here and in Recruitly.
+    let (pdl_id, opted_out, recruitly_id, recruitly_dnc): (
+        Option<String>,
+        bool,
+        Option<String>,
+        bool,
+    ) = sqlx::query_as(
+        "DELETE FROM person WHERE id = $1 AND org_id = $2
+             RETURNING pdl_id, opted_out, recruitly_id, recruitly_dnc",
     )
     .bind(drop)
     .bind(org_id)
     .fetch_one(&mut **tx)
     .await?;
     sqlx::query(
-        "UPDATE person SET pdl_id = COALESCE(pdl_id, $2), opted_out = opted_out OR $3 WHERE id = $1",
+        "UPDATE person SET pdl_id = COALESCE(pdl_id, $2), opted_out = opted_out OR $3,
+                recruitly_id = COALESCE(recruitly_id, $4), recruitly_dnc = recruitly_dnc OR $5
+         WHERE id = $1",
     )
     .bind(keep)
     .bind(pdl_id)
     .bind(opted_out)
+    .bind(recruitly_id)
+    .bind(recruitly_dnc)
     .execute(&mut **tx)
     .await?;
     audit::record(

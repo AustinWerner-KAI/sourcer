@@ -4,6 +4,7 @@ import { api, SignedOut } from "../api/client";
 import type { Me } from "../api/types/Me";
 import type { Role } from "../api/types/Role";
 import type { TeamMember } from "../api/types/TeamMember";
+import { RecruitlyPanel } from "./Recruitly";
 
 const statusLabel: Record<TeamMember["status"], string> = {
   invited: "Invited",
@@ -142,6 +143,7 @@ export function Team({ me }: { me: Me }) {
           </table>
         )}
       </section>
+      <RecruitlyPanel />
     </main>
   );
 }

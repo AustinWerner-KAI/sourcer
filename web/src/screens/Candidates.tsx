@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
@@ -6,7 +6,9 @@ import type { CandidateRow } from "../api/types/CandidateRow";
 import type { CandidateTab } from "../api/types/CandidateTab";
 import type { DecisionAction } from "../api/types/DecisionAction";
 import type { ReasonCode } from "../api/types/ReasonCode";
+import type { RecruitlyLink } from "../api/types/RecruitlyLink";
 import { Steps } from "./Briefs";
+import { ago, jobRef, RecruitlyJobBar } from "./Recruitly";
 
 const TABS: { tab: CandidateTab; label: string }[] = [
   { tab: "review", label: "To review" },
@@ -36,7 +38,7 @@ export function Evidence({ text }: { text: string }) {
   return <>{parts}</>;
 }
 
-/** Step 4: ranked people for one role. Shortlist or reject; nothing is sent from here. */
+/** Step 4: ranked people for one role. Shortlist or reject, then add shortlisted people to Recruitly. */
 export function Candidates() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
@@ -126,13 +128,16 @@ export function Candidates() {
             )}
           </div>
         )}
+        {v.recruitly && <RecruitlyJobBar roleId={id} link={v.recruitly_job} />}
       </section>
 
       <section className="panel people" aria-label={TABS.find((t) => t.tab === tab)?.label}>
         {v.people.length === 0 ? (
           <Empty tab={tab} roleId={id} />
         ) : (
-          v.people.map((p) => <Person key={p.id} p={p} tab={tab} roleId={id} />)
+          v.people.map((p) => (
+            <Person key={p.id} p={p} tab={tab} roleId={id} recruitly={v.recruitly} job={v.recruitly_job} />
+          ))
         )}
         {counts[tab] > v.people.length && (
           <p className="note">
@@ -140,7 +145,10 @@ export function Candidates() {
           </p>
         )}
       </section>
-      <p className="later">Nothing is sent from this screen. Shortlisting only moves a person to the next step.</p>
+      <p className="later">
+        Nothing is sent to candidates from this screen.
+        {v.recruitly ? " Adding someone to Recruitly copies their record there; it sends them nothing." : ""}
+      </p>
     </main>
   );
 }
@@ -155,7 +163,19 @@ function Empty({ tab, roleId }: { tab: CandidateTab; roleId: string }) {
   );
 }
 
-function Person({ p, tab, roleId }: { p: CandidateRow; tab: CandidateTab; roleId: string }) {
+function Person({
+  p,
+  tab,
+  roleId,
+  recruitly,
+  job,
+}: {
+  p: CandidateRow;
+  tab: CandidateTab;
+  roleId: string;
+  recruitly: boolean;
+  job: RecruitlyLink | null;
+}) {
   const queryClient = useQueryClient();
   const [rejecting, setRejecting] = useState(false);
   const decide = useMutation({
@@ -178,7 +198,7 @@ function Person({ p, tab, roleId }: { p: CandidateRow; tab: CandidateTab; roleId
         <div className="who">
           <span className="nm">{p.name}</span>
           {where && <span className="ti">{where}</span>}
-          {p.do_not_contact && <span className="flag known">Do not contact</span>}
+          {p.do_not_contact && <span className="flag stop">Do not contact</span>}
           {p.known && <span className="flag known">{p.known}</span>}
           {p.employer_unknown && <span className="flag emp">Check employer</span>}
           {tab === "rejected" && p.reject_reason && (
@@ -204,6 +224,7 @@ function Person({ p, tab, roleId }: { p: CandidateRow; tab: CandidateTab; roleId
           </div>
         )}
         <div className="reach">{reach || "No contact details yet"}</div>
+        {recruitly && tab === "shortlisted" && <RecruitlyLine p={p} roleId={roleId} job={job} />}
       </div>
       <div className="acts">
         {tab === "review" && ranked && !rejecting && (
@@ -258,5 +279,131 @@ function Person({ p, tab, roleId }: { p: CandidateRow; tab: CandidateTab; roleId
         </p>
       )}
     </article>
+  );
+}
+
+/** What Recruitly knows about a shortlisted person, and adding them there. */
+function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; job: RecruitlyLink | null }) {
+  const queryClient = useQueryClient();
+  // The question waiting for a yes, and the questions already answered yes.
+  const [confirm, setConfirm] = useState<{ text: string; key: string } | null>(null);
+  const [yes, setYes] = useState<string[]>([]);
+  // Every Recruitly call spends from the daily allowance, so the count is read again too.
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["candidates", roleId] });
+    queryClient.invalidateQueries({ queryKey: ["recruitly-status"] });
+  };
+  const check = useMutation({ mutationFn: () => api.recruitlyCheck(p.id), onSettled: refresh });
+  const add = useMutation({
+    mutationFn: (confirmed: string[]) => {
+      check.reset();
+      return api.handover(p.id, confirmed);
+    },
+    onSuccess: (r) => {
+      setConfirm(r.confirm && r.confirm_key ? { text: r.confirm, key: r.confirm_key } : null);
+      // A question can follow a fresh check, so the line is read again either way.
+      refresh();
+    },
+    onError: () => {
+      // A failed try starts over: every question is asked again.
+      setConfirm(null);
+      setYes([]);
+      refresh();
+    },
+  });
+  const agree = (key: string) => {
+    const next = [...yes, key];
+    setYes(next);
+    add.mutate(next);
+  };
+  const busy = check.isPending || add.isPending;
+  const target = job ? `${jobRef(job)} in Recruitly` : "Recruitly";
+
+  // Three levels: stop (never add), check (look first) and clear.
+  let flag: ReactNode;
+  if (p.sent_to_recruitly) {
+    flag = (
+      <span className="flag sent">
+        Added to Recruitly {p.sent_to_recruitly}
+        {p.in_recruitly_pipeline && job ? ` · in ${jobRef(job)}` : ""}
+      </span>
+    );
+  } else if (p.do_not_contact) {
+    flag = <span className="flag stop">Can't be added to Recruitly</span>;
+  } else if (p.recruitly_check_failed) {
+    flag = <span className="flag emp">Recruitly check failed</span>;
+  } else if (!p.recruitly_checked) {
+    flag = <span className="flag emp">Not checked in Recruitly</span>;
+  } else if (p.recruitly_note) {
+    // Already in Recruitly with an owner, stage or history: look before adding.
+    const clear = p.recruitly_note === "In Recruitly";
+    flag = <span className={`flag ${clear ? "rc" : "emp"}`}>{p.recruitly_note}</span>;
+  } else {
+    flag = <span className="flag rc">Not in Recruitly</span>;
+  }
+  // Can be added: not yet sent and not on the do-not-contact list.
+  const open = !p.sent_to_recruitly && !p.do_not_contact;
+  // A pending question goes away if the row changes under it.
+  useEffect(() => {
+    if (!open) {
+      setConfirm(null);
+      setYes([]);
+    }
+  }, [open]);
+  // The question takes focus so keyboard and screen reader users meet it.
+  const yesButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirm) yesButton.current?.focus();
+  }, [confirm]);
+
+  return (
+    <div className="rcline">
+      <div className="rcflags">
+        {flag}
+        {p.recruitly_checked_at && !p.recruitly_check_failed && !p.sent_to_recruitly && (
+          <span className="rcwhen">Checked {ago(p.recruitly_checked_at)}</span>
+        )}
+        {/* Still offered when blocked: Recruitly may since have cleared its flag. */}
+        {!p.sent_to_recruitly && (
+          <button type="button" className="link-button" onClick={() => check.mutate()} disabled={busy}>
+            {check.isPending ? "Checking" : p.recruitly_checked ? "Check again" : "Check now"}
+          </button>
+        )}
+      </div>
+      {open && !confirm && (
+        <button type="button" className="btn-ghost rcadd" onClick={() => add.mutate(yes)} disabled={busy}>
+          {add.isPending ? "Adding" : `Add to ${target}`}
+        </button>
+      )}
+      {open && confirm && (
+        <div className="confirm" role="group" aria-label="Check before adding">
+          <p>{confirm.text}</p>
+          <button
+            ref={yesButton}
+            type="button"
+            className="btn-ghost"
+            onClick={() => agree(confirm.key)}
+            disabled={busy}
+          >
+            {add.isPending ? "Adding" : "Add anyway"}
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => {
+              setConfirm(null);
+              setYes([]);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {(check.error || add.error) && (
+        <p className="form-error" role="alert">
+          {(add.error ?? check.error)?.message}
+        </p>
+      )}
+    </div>
   );
 }

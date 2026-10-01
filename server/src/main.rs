@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use sourcer_server::{
-    ai, app, candidates::RankHandler, config::Config, db, searching::PullHandler,
-    sources::pdl::PdlClient, worker::Worker,
+    ai, app, candidates::RankHandler, config::Config, db, recruitly::Recruitly,
+    searching::PullHandler, sources::pdl::PdlClient, worker::Worker,
 };
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
@@ -35,6 +35,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Brief drafting and ranking are off; set ANTHROPIC_API_KEY to turn them on");
     }
 
+    // Recruitly: roles from its jobs, the check at shortlist, and handover.
+    let recruitly = Arc::new(Recruitly::new(
+        config.recruitly_api_key.clone(),
+        config.recruitly_daily_cap,
+    ));
+    if !recruitly.configured() {
+        tracing::warn!("The Recruitly link is off; set RECRUITLY_API_KEY to turn it on");
+    }
+
     // Background jobs. Handlers are registered as features land.
     let (stop, stopped) = watch::channel(false);
     let worker = Worker::new(pool.clone())
@@ -59,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
     let mut state = app::AppState::new(Some(pool), auth);
     state.pdl = pdl;
     state.ai = ai;
+    state.recruitly = recruitly;
     let router = app::router_with_web(state, config.web_dir.as_deref());
     // Connection info lets the sign-in limit count attempts per address.
     axum::serve(

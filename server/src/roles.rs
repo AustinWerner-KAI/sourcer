@@ -24,13 +24,13 @@ use crate::{
     auth::CurrentUser,
     domain::{
         Brief, BriefDomain, BriefLines, BriefTool, Client, ConfirmBrief, LockedOut, NewClient,
-        NewRole, RoleDetail, RoleSummary, RoleUpdate,
+        NewRole, RecruitlyLink, RoleDetail, RoleSummary, RoleUpdate,
     },
     employer,
 };
 
 /// The same limit Claude reads, so nothing past it is silently ignored.
-const MAX_SPEC_CHARS: usize = crate::ai::MAX_SPEC_CHARS;
+pub(crate) const MAX_SPEC_CHARS: usize = crate::ai::MAX_SPEC_CHARS;
 const SPEC_TOO_LONG: &str = "The job spec is too long. Keep it under 30,000 characters.";
 const MAX_ITEMS: usize = 20;
 const MAX_ITEM_CHARS: usize = 120;
@@ -48,7 +48,7 @@ fn unavailable() -> Response {
     StatusCode::SERVICE_UNAVAILABLE.into_response()
 }
 
-fn clean_text(raw: &str, max: usize) -> Option<String> {
+pub(crate) fn clean_text(raw: &str, max: usize) -> Option<String> {
     let s = raw.trim();
     (!s.is_empty() && s.chars().count() <= max).then(|| s.to_string())
 }
@@ -366,15 +366,28 @@ fn brief(r: BriefRow) -> Brief {
 }
 
 /// The role with its client, latest brief and locked-out companies.
-async fn role_detail(pool: &PgPool, org_id: Uuid, id: Uuid) -> anyhow::Result<Option<RoleDetail>> {
-    let row: Option<(Uuid, String, Option<String>, Option<Uuid>)> = sqlx::query_as(
-        "SELECT id, title, spec_text, client_id FROM role WHERE id = $1 AND org_id = $2",
+pub(crate) async fn role_detail(
+    pool: &PgPool,
+    org_id: Uuid,
+    id: Uuid,
+) -> anyhow::Result<Option<RoleDetail>> {
+    type Row = (
+        Uuid,
+        String,
+        Option<String>,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT id, title, spec_text, client_id, recruitly_job_id, recruitly_job_label
+         FROM role WHERE id = $1 AND org_id = $2",
     )
     .bind(id)
     .bind(org_id)
     .fetch_optional(pool)
     .await?;
-    let Some((id, title, spec_text, client_id)) = row else {
+    let Some((id, title, spec_text, client_id, job_id, job_label)) = row else {
         return Ok(None);
     };
     let hiring: Option<ClientRow> = match client_id {
@@ -409,6 +422,10 @@ async fn role_detail(pool: &PgPool, org_id: Uuid, id: Uuid) -> anyhow::Result<Op
         spec_text: spec_text.unwrap_or_default(),
         brief: latest.map(brief),
         locked_out,
+        recruitly_job: job_id.map(|id| RecruitlyLink {
+            label: job_label.unwrap_or_else(|| id.clone()),
+            id,
+        }),
     }))
 }
 
