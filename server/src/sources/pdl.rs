@@ -124,10 +124,57 @@ fn parse_person(p: &Value) -> Option<PersonRecord> {
                     .any(|f| domain == f || domain.ends_with(&format!(".{f}")))
             })
         }),
+        personal_emails: personal_emails(p),
         phones: phones(p),
         skills: skills(p),
         experience,
     })
+}
+
+/// Most personal emails kept per person.
+const MAX_PERSONAL_EMAILS: usize = 3;
+
+/// A well-formed address, lower-cased.
+fn email(raw: &str) -> Option<String> {
+    let e = raw.trim().to_lowercase();
+    let (local, domain) = e.split_once('@')?;
+    (!local.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !e.contains(char::is_whitespace)
+        && e.matches('@').count() == 1)
+        .then_some(e)
+}
+
+/// Personal emails from every field PDL puts them in, plus a "work" email that
+/// is really at a free provider. Repeats dropped, at most a few.
+fn personal_emails(p: &Value) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    if let Some(xs) = p.get("personal_emails").and_then(Value::as_array) {
+        found.extend(xs.iter().filter_map(Value::as_str).map(String::from));
+    }
+    found.extend(text(p, "recommended_personal_email"));
+    if let Some(xs) = p.get("emails").and_then(Value::as_array) {
+        found.extend(
+            xs.iter()
+                .filter(|x| x.get("type").and_then(Value::as_str) == Some("personal"))
+                .filter_map(|x| x.get("address").and_then(Value::as_str))
+                .map(String::from),
+        );
+    }
+    if let Some(w) = text(p, "work_email") {
+        if work_email(&w).is_none() {
+            found.push(w);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for e in found.iter().filter_map(|e| email(e)) {
+        if !out.contains(&e) && out.len() < MAX_PERSONAL_EMAILS {
+            out.push(e);
+        }
+    }
+    out
 }
 
 /// Free email providers: an address there is personal, whatever field it is in.
@@ -175,7 +222,7 @@ const PERSONAL_BRANDS: &[&str] = &[
 ];
 
 /// A plausible work address, lower-cased; `None` for anything else, including
-/// addresses at free email providers. Personal emails are never kept (SRS N9).
+/// addresses at free email providers (those are personal).
 pub fn work_email(raw: &str) -> Option<String> {
     let e = raw.trim().to_lowercase();
     let (local, domain) = e.split_once('@')?;
@@ -320,8 +367,7 @@ mod tests {
             ["IAM", "okta"],
             "trimmed, blanks and repeats dropped"
         );
-        let all = format!("{a:?}");
-        assert!(!all.contains("personal"), "personal emails are never read");
+        assert_eq!(a.personal_emails, ["alex.personal@gmail.com"], "kept once");
 
         let b = &page.records[1];
         assert_eq!(
@@ -331,6 +377,39 @@ mod tests {
         );
         assert_eq!(b.current_title, None);
         assert!(b.experience.is_empty() && b.skills.is_empty());
+        assert!(b.personal_emails.is_empty(), "masked on free plans");
+    }
+
+    #[test]
+    fn personal_emails_come_from_every_field_once() {
+        let p = json!({
+            "personal_emails": [" Alex.Home@Gmail.com ", "not-an-email", "a@b", "x@y.com", "z@y.com"],
+            "recommended_personal_email": "alex.home@gmail.com",
+            "emails": [{"address": "alex@icloud.com", "type": "personal"},
+                       {"address": "alex@examplepay.com", "type": "current_professional"}],
+            "work_email": "alex.work@yahoo.co.uk"
+        });
+        assert_eq!(
+            personal_emails(&p),
+            ["alex.home@gmail.com", "x@y.com", "z@y.com"],
+            "lower-cased, bad ones dropped, repeats once, at most three"
+        );
+        let p = json!({"emails": [{"address": "alex@icloud.com", "type": "personal"}],
+                       "work_email": "alex.work@yahoo.co.uk",
+                       "recommended_personal_email": "@nope"});
+        assert_eq!(
+            personal_emails(&p),
+            ["alex@icloud.com", "alex.work@yahoo.co.uk"],
+            "a free-provider 'work' email is personal"
+        );
+        let p = json!({"work_email": "alex@examplepay.com"});
+        assert!(
+            personal_emails(&p).is_empty(),
+            "a real work email is not personal"
+        );
+        for bad in ["a@b..", "a@.com", "a b@c.com", "a@b@c.com", "@c.com"] {
+            assert_eq!(email(bad), None, "{bad}");
+        }
     }
 
     #[test]

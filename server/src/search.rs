@@ -397,9 +397,8 @@ async fn merge_people(
     Ok(())
 }
 
-/// Keep the work email and phone numbers the provider gave. Personal emails
-/// are never stored from a provider (SRS N9). A value already held for
-/// another person is left with them.
+/// Keep the work email, personal emails and phone numbers the provider gave.
+/// A value already held for another person is left with them.
 async fn save_contacts(
     tx: &mut Transaction<'_, Postgres>,
     org_id: Uuid,
@@ -410,6 +409,11 @@ async fn save_contacts(
         .work_email
         .iter()
         .map(|e| ("work_email", e.to_lowercase()))
+        .chain(
+            r.personal_emails
+                .iter()
+                .map(|e| ("personal_email", e.to_lowercase())),
+        )
         .chain(r.phones.iter().map(|p| ("phone", p.clone())));
     for (kind, value) in found {
         sqlx::query(
@@ -507,6 +511,7 @@ mod tests {
                 end: None,
             }],
             work_email: None,
+            personal_emails: vec![],
             phones: vec![],
             skills: vec![],
         }
@@ -679,6 +684,7 @@ mod tests {
         };
         let mut with_contacts = person("p1", "https://www.linkedin.com/in/p-one/");
         with_contacts.work_email = Some("P1@ExamplePay.com".into());
+        with_contacts.personal_emails = vec!["P1.Home@Gmail.com".into()];
         with_contacts.phones = vec!["+971 50 000 0000".into()];
         let src = FakeSource::new(vec![with_contacts, person("p2", "linkedin.com/in/p-two")]);
 
@@ -758,7 +764,12 @@ mod tests {
                     "p1@examplepay.com".into(),
                     "pdl".into()
                 ),
-                ("phone".into(), "+971 50 000 0000".into(), "pdl".into())
+                ("phone".into(), "+971 50 000 0000".into(), "pdl".into()),
+                (
+                    "personal_email".into(),
+                    "p1.home@gmail.com".into(),
+                    "pdl".into()
+                )
             ]
         );
     }

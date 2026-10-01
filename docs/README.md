@@ -19,7 +19,7 @@ See the project plan in [`SRS.md`](SRS.md#project-plan). M2 Reach (week 10) is t
 
 - Rust server with `/api/health`, config from environment, Postgres pool, migrations run on start
 - Schema: 17 tables with `org_id` on every row; one candidacy per person per role; contacts typed (work, personal, phone); do-not-contact list that survives deletion; kill switch on the org
-- Send-safety rules (`server/src/policy.rs`): opt-out, do-not-contact, kill switch, sequence approval, reply on any channel, personal-email block, all tested
+- Send-safety rules (`server/src/policy.rs`): opt-out, do-not-contact, kill switch, sequence approval, reply on any channel, all tested
 - Candidate state machine with tests (no contact without approval, no handover without reply, late replies and reconsidered rejects allowed)
 - Shared types generated from Rust into TypeScript
 - Web app shell in Austin Werner black and gold with the six screens as placeholders

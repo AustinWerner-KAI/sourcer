@@ -40,7 +40,7 @@ Team size is still to confirm (see open decisions).
 | F8 | Honour the client off-limits list: never surface their staff | Must | M1 |
 | F9 | Shortlist or reject with a reason code (FIT, SENIOR, JUNIOR, FUNCTION, SKILL, LOCATION, EMPLOYER, KNOWN) | Must | M1 |
 | F10 | Save a LinkedIn profile the resourcer is viewing, via a Chrome button (extension) that reads only the open page, only on click (no automation). The resourcer checks the details and picks the role; locked-out staff are refused | Must | M1 |
-| F11 | Work email and phone: taken from People Data Labs when pulled (paid plan; only an address at the person's own employer), Apollo for shortlisted people otherwise. Personal emails are never taken from a provider | Must | M2 |
+| F11 | Email and phone: taken from People Data Labs when pulled (paid plan). A work email only when it is at the person's own employer; personal emails are kept too (Kai, 1 Oct 2026). Apollo finds work emails for shortlisted people otherwise | Must | M2 |
 | F12 | Draft outreach in the resourcer's voice for email, InMail and WhatsApp | Must | M2 |
 | F13 | Approve one person's whole sequence (first message plus follow-ups) once | Must | M2 |
 | F14 | Send approved email and follow-ups from the resourcer's own Outlook mailbox | Must | M2 |
@@ -69,9 +69,9 @@ Safety comes first: no message leaves without approval, and no person is contact
 | N4 | Security | API keys and mailbox tokens live in environment variables or encrypted at rest; never in code, logs or the browser |
 | N5 | Security | Private hosting; the server listens on localhost and is reached through the VPN or a reverse proxy |
 | N6 | Security | Every action that changes a candidate or sends a message is written to the audit log |
-| N7 | Safety | Every send path passes the send-safety check: opt-out, do-not-contact, kill switch, approval, reply on any channel, personal-email rule |
+| N7 | Safety | Every send path passes the send-safety check: opt-out, do-not-contact, kill switch, approval, reply on any channel |
 | N8 | Safety | Database constraint: one candidacy per person per role |
-| N9 | Privacy | Personal emails only for people the team has spoken to before |
+| N9 | Privacy | Personal emails from PDL are kept and may be used for outreach (Kai, 1 Oct 2026). Opt-outs, do-not-contact and every other send check still apply; the privacy adviser reviews this under D9 |
 | N10 | Privacy | Opt-outs and erasures honoured forever via the do-not-contact list; data kept no longer than needed (period to confirm with an adviser) |
 | N11 | Cost | Paid calls (PDL, Apollo, AI) show their cost first; an admin can pause all paid calls |
 | N12 | Scalability | Every row carries an organisation id, so other agencies can be added without a rebuild |
@@ -150,6 +150,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 1 Oct 2026 | N9 changed (Kai): PDL personal emails are kept and usable for cold outreach, in every market. Risk noted: UK PECR needs prior consent to email an individual's personal address; the UAE PDPL is consent-based. D9 adviser sign-off still open |
 | 30 Sep 2026 | D10 decided: Recruitly. F2: roles can start from a Recruitly job. F7: Recruitly check at shortlist. F18: add to Recruitly, moved to M1 (Kai: check on shortlist, button on shortlisted, link roles to jobs, pull the spec and client from Recruitly) |
 | 30 Sep 2026 | F10: LinkedIn save button built as a Chrome extension (Kai: Chrome, save straight to a role). Recruitly is the CRM/ATS for the known check and handover (D10, to plan) |
 | 30 Sep 2026 | F6, F7, F9: Candidates screen built. Ranking runs after each pull; known people are flagged, not hidden (Kai). LinkedIn save button (F10) moves to the next sprint |
