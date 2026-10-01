@@ -16,6 +16,7 @@ struct FakeRc {
     candidates: Mutex<Vec<Value>>,
     me_email: Mutex<String>,
     down: AtomicBool,
+    refuse_notes: AtomicBool,
 }
 
 impl FakeRc {
@@ -125,10 +126,15 @@ async fn fake_recruitly(f: Arc<FakeRc>) -> String {
                         let mut c = body.clone();
                         let id = format!("new-{}", f.candidates.lock().unwrap().len() + 1);
                         c["id"] = json!(id);
+                        c["doNotContact"] = json!(false);
                         f.candidates.lock().unwrap().push(c);
                         ok(json!(id))
                     }
                     ("POST", ["jobs", _, "pipeline"]) => ok(json!("pl-1")),
+                    ("POST", ["journal", _]) if f.refuse_notes.load(Ordering::SeqCst) => {
+                        return (StatusCode::BAD_REQUEST, Json(json!({"success": false, "message": "note refused"})))
+                            .into_response()
+                    }
                     ("POST", ["journal", _]) => ok(json!({"id": "n-1"})),
                     _ => return StatusCode::NOT_FOUND.into_response(),
                 };
@@ -367,6 +373,28 @@ async fn shortlisting_checks_recruitly_and_do_not_contact_there_blocks_it() {
     .unwrap();
     assert!(kept, "marked unchecked, flag kept");
 
+    // A duplicate record of the same person that says "contactable" cannot clear
+    // the flag set on the first record.
+    {
+        let mut c = f.candidates.lock().unwrap();
+        c.remove(1);
+        c.push(json!({"id": "rc-1b", "firstName": "Person", "lastName": "1", "linkedIn": li1, "doNotContact": false}));
+    }
+    let res = send(&app, decide_req(&me, &people[1], "shortlist", None)).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::CONFLICT,
+        "duplicate cannot clear it"
+    );
+    let dnc: bool = sqlx::query_scalar(
+        "SELECT p.recruitly_dnc FROM person p JOIN candidacy c ON c.person_id = p.id WHERE c.id = $1",
+    )
+    .bind(Uuid::parse_str(people[1]["id"].as_str().unwrap()).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(dnc);
+
     let res = send(&app, decide_req(&me, &people[2], "shortlist", None)).await;
     let row = json_body(res).await;
     assert_eq!(
@@ -396,6 +424,26 @@ async fn shortlisting_checks_recruitly_and_do_not_contact_there_blocks_it() {
     let res = send(&app, json_req("POST", &uri2, &me, json!({}))).await;
     assert_eq!(json_body(res).await["recruitly_check_failed"], false);
 
+    // A record that does not say whether they can be contacted is a failed check.
+    f.candidates.lock().unwrap()[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("doNotContact");
+    let uri0 = format!(
+        "/api/candidates/{}/recruitly-check",
+        people[0]["id"].as_str().unwrap()
+    );
+    let res = send(&app, json_req("POST", &uri0, &me, json!({}))).await;
+    assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+    let failed: bool = sqlx::query_scalar(
+        "SELECT p.recruitly_check_failed FROM person p JOIN candidacy c ON c.person_id = p.id WHERE c.id = $1",
+    )
+    .bind(Uuid::parse_str(people[0]["id"].as_str().unwrap()).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(failed, "unknown is never contactable");
+
     let checks: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'person.recruitly_check'",
     )
@@ -403,7 +451,7 @@ async fn shortlisting_checks_recruitly_and_do_not_contact_there_blocks_it() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(checks, 4);
+    assert_eq!(checks, 5);
 }
 
 #[tokio::test]
@@ -503,8 +551,22 @@ async fn handover_creates_once_and_asks_before_sending_a_colleagues_person() {
     // A yes to a different question does not pass this one.
     let v = json_body(send(&app, hand(&row, &["namesake"])).await).await;
     assert_eq!(v["confirm_key"], "owner:u-teo");
+    // Recruitly refuses the note: nothing was stored, so the retry sends it.
+    f.refuse_notes.store(true, Ordering::SeqCst);
+    let res = send(&app, hand(&row, &["owner:u-teo"])).await;
+    assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+    f.refuse_notes.store(false, Ordering::SeqCst);
     let v = json_body(send(&app, hand(&row, &["owner:u-teo"])).await).await;
     assert!(v["candidate"]["sent_to_recruitly"].is_string());
+    let teo_notes: Vec<Value> = f
+        .posted
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.0 == "/api/nova/journal/rc-teo")
+        .map(|p| p.1.clone())
+        .collect();
+    assert_eq!(teo_notes.len(), 2, "refused once, then stored once");
     assert_eq!(
         f.posted("/api/nova/candidates").len(),
         1,

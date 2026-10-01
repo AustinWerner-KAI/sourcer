@@ -611,7 +611,15 @@ async fn find(
     for q in queries.iter().filter(|q| !q.trim().is_empty()) {
         let hits = s.search_candidates(q).await?;
         if let Some(h) = hits.iter().find(|h| same_person(h)) {
-            return Ok(Found::Sure(Box::new(h.clone())));
+            let mut h = h.clone();
+            // Duplicate records of the same person: one saying "do not contact" is enough.
+            if hits
+                .iter()
+                .any(|o| same_person(o) && o.do_not_contact == Some(true))
+            {
+                h.do_not_contact = Some(true);
+            }
+            return Ok(Found::Sure(Box::new(h)));
         }
         for h in hits {
             if !wanted.is_empty()
@@ -657,9 +665,10 @@ pub async fn check_person(
         Ok(f) => f,
         Err(e) => {
             sqlx::query(
-                "UPDATE person SET recruitly_check_failed = true, recruitly_checked_at = now() WHERE id = $1",
+                "UPDATE person SET recruitly_check_failed = true, recruitly_checked_at = now() WHERE id = $1 AND org_id = $2",
             )
             .bind(person_id)
+            .bind(org_id)
             .execute(pool)
             .await?;
             return Err(e.into());
@@ -676,16 +685,31 @@ pub async fn check_person(
         // it cannot be read, the check has failed: never assume contactable.
         if h.do_not_contact.is_none() {
             match s.candidate(&h.id).await {
-                Ok(full) => {
+                Ok(full) if full.do_not_contact.is_some() => {
                     h.do_not_contact = full.do_not_contact;
                     h.owner_id = h.owner_id.or(full.owner_id);
                     h.owner = h.owner.or(full.owner);
                 }
-                Err(e) => {
+                // The record does not say: treat the check as failed, never as contactable.
+                Ok(_) => {
                     sqlx::query(
-                        "UPDATE person SET recruitly_check_failed = true, recruitly_checked_at = now() WHERE id = $1",
+                        "UPDATE person SET recruitly_check_failed = true, recruitly_checked_at = now() WHERE id = $1 AND org_id = $2",
                     )
                     .bind(person_id)
+                    .bind(org_id)
+                    .execute(pool)
+                    .await?;
+                    return Err(RecruitlyError::BadResponse(
+                        "the record does not say whether they can be contacted".into(),
+                    )
+                    .into());
+                }
+                Err(e) => {
+                    sqlx::query(
+                        "UPDATE person SET recruitly_check_failed = true, recruitly_checked_at = now() WHERE id = $1 AND org_id = $2",
+                    )
+                    .bind(person_id)
+                    .bind(org_id)
                     .execute(pool)
                     .await?;
                     return Err(e.into());
@@ -716,15 +740,22 @@ pub async fn check_person(
     };
     sqlx::query(
         "UPDATE person SET recruitly_id = COALESCE($2, recruitly_id), recruitly_owner_id = $3,
-                recruitly_note = $4, recruitly_dnc = COALESCE($5, recruitly_dnc),
+                recruitly_note = $4,
+                -- Recruitly can clear its own flag only on the record it set it on.
+                -- A different record (a duplicate) can add the flag, never remove it.
+                recruitly_dnc = CASE
+                    WHEN $5 IS NULL THEN recruitly_dnc
+                    WHEN recruitly_id IS NOT NULL AND recruitly_id IS DISTINCT FROM $2 THEN recruitly_dnc OR $5
+                    ELSE $5 END,
                 recruitly_check_failed = false, recruitly_checked_at = now()
-         WHERE id = $1",
+         WHERE id = $1 AND org_id = $6",
     )
     .bind(person_id)
     .bind(&checked.id)
     .bind(&checked.owner_id)
     .bind(note(&found))
     .bind(dnc_known)
+    .bind(org_id)
     .execute(&mut *tx)
     .await?;
     audit::record(
@@ -970,8 +1001,9 @@ pub async fn handover(
     let steps = async {
         // 1. The Recruitly candidate: the one found, or a new one.
         let known: Option<String> =
-            sqlx::query_scalar("SELECT recruitly_id FROM person WHERE id = $1")
+            sqlx::query_scalar("SELECT recruitly_id FROM person WHERE id = $1 AND org_id = $2")
                 .bind(person_id)
+                .bind(user.org_id)
                 .fetch_one(pool)
                 .await?;
         let rc_id = match candidate_id.or(known) {
@@ -979,18 +1011,20 @@ pub async fn handover(
             None => {
                 type P = (String, Option<String>, Option<String>, Option<String>);
                 let (name, title, employer, linkedin): P = sqlx::query_as(
-                    "SELECT full_name, current_title, current_employer, linkedin_url FROM person WHERE id = $1",
+                    "SELECT full_name, current_title, current_employer, linkedin_url FROM person WHERE id = $1 AND org_id = $2",
                 )
                 .bind(person_id)
+                .bind(user.org_id)
                 .fetch_one(pool)
                 .await?;
                 let contact = |kind: &'static str| {
                     sqlx::query_scalar::<_, String>(
-                        "SELECT value FROM contact WHERE person_id = $1 AND kind = $2::contact_kind
+                        "SELECT value FROM contact WHERE person_id = $1 AND kind = $2::contact_kind AND org_id = $3
                          ORDER BY created_at LIMIT 1",
                     )
                     .bind(person_id)
                     .bind(kind)
+                    .bind(user.org_id)
                     .fetch_optional(pool)
                 };
                 let (first, last) = split_name(&name);
@@ -1016,9 +1050,10 @@ pub async fn handover(
                     anyhow::bail!(RecruitlyError::Http(409, "taken over by another request".into()));
                 }
                 let id = s.create_candidate(&new).await?;
-                sqlx::query("UPDATE person SET recruitly_id = COALESCE(recruitly_id, $2) WHERE id = $1")
+                sqlx::query("UPDATE person SET recruitly_id = COALESCE(recruitly_id, $2) WHERE id = $1 AND org_id = $3")
                     .bind(person_id)
                     .bind(&id)
+                    .bind(user.org_id)
                     .execute(pool)
                     .await?;
                 id
@@ -1047,8 +1082,9 @@ pub async fn handover(
         // lost answer means a missing note rather than two.
         if !noted && !note_attempted {
             let (tier, rank, evidence): (Option<String>, Option<i32>, Option<serde_json::Value>) =
-                sqlx::query_as("SELECT tier, rank, evidence FROM candidacy WHERE id = $1")
+                sqlx::query_as("SELECT tier, rank, evidence FROM candidacy WHERE id = $1 AND org_id = $2")
                     .bind(candidacy)
+                    .bind(user.org_id)
                     .fetch_one(pool)
                     .await?;
             let evidence = evidence.unwrap_or_default();
@@ -1076,7 +1112,23 @@ pub async fn handover(
             step("UPDATE recruitly_handover SET note_attempted = true WHERE candidacy_id = $1 AND claim_token = $2")
                 .execute(pool)
                 .await?;
-            s.add_note(&rc_id, &text).await?;
+            if let Err(e) = s.add_note(&rc_id, &text).await {
+                // Sure it was never stored (not sent, or a clear refusal): allow a retry.
+                let never_stored = matches!(
+                    e,
+                    RecruitlyError::NotConfigured
+                        | RecruitlyError::Limit
+                        | RecruitlyError::Refused
+                        | RecruitlyError::NotFound
+                        | RecruitlyError::Http(400..=499, _)
+                );
+                if never_stored {
+                    step("UPDATE recruitly_handover SET note_attempted = false WHERE candidacy_id = $1 AND claim_token = $2")
+                        .execute(pool)
+                        .await?;
+                }
+                return Err(e.into());
+            }
             step("UPDATE recruitly_handover SET noted = true WHERE candidacy_id = $1 AND claim_token = $2")
                 .execute(pool)
                 .await?;
