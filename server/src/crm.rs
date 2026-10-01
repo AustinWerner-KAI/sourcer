@@ -752,6 +752,13 @@ pub async fn check_person(
             possible: false,
         };
     }
+    // Learn who the checker is in Recruitly, once, so the screen can tell
+    // their own records from a colleague's. A failed look-up only costs that.
+    if let (Some(user), Some(_)) = (actor, &checked.owner_id) {
+        if let Err(e) = my_recruitly_id(pool, &s, org_id, user).await {
+            tracing::warn!(error = %e, "Recruitly user look-up failed");
+        }
+    }
     let what = match &found {
         Found::Sure(_) => "sure",
         Found::Maybe(_) => "possible",
@@ -827,6 +834,36 @@ pub async fn check_again(
 }
 
 // ---------- Handover ----------
+
+/// The team member's own Recruitly user: kept from an earlier look-up, else
+/// found by their email and kept. `None` when Recruitly has no such user.
+pub(crate) async fn my_recruitly_id(
+    pool: &PgPool,
+    s: &Session<'_>,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<Option<String>> {
+    let (kept, email): (Option<String>, String) = sqlx::query_as(
+        "SELECT recruitly_user_id, email FROM app_user WHERE id = $1 AND org_id = $2",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_one(pool)
+    .await?;
+    if kept.is_some() {
+        return Ok(kept);
+    }
+    let found = recruitly_user(s, &email).await;
+    if let Some(id) = &found {
+        sqlx::query("UPDATE app_user SET recruitly_user_id = $3 WHERE id = $1 AND org_id = $2")
+            .bind(user_id)
+            .bind(org_id)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(found)
+}
 
 /// The Recruitly user with this email, if any. One call.
 async fn recruitly_user(s: &Session<'_>, email: &str) -> Option<String> {
@@ -986,7 +1023,13 @@ pub async fn handover(
         }
         if let Some(owner_id) = &checked.owner_id {
             let key = format!("owner:{owner_id}");
-            if !confirmed(&key) && recruitly_user(&s, &user.email).await.as_ref() != Some(owner_id)
+            if !confirmed(&key)
+                && my_recruitly_id(pool, &s, user.org_id, user.id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    != Some(owner_id)
             {
                 let owner = checked.owner.as_deref().unwrap_or("A colleague");
                 let status = checked
@@ -1084,7 +1127,7 @@ pub async fn handover(
                     linked_in: linkedin.map(|l| format!("https://www.{l}")),
                     job_title: title,
                     current_employer: employer,
-                    owner_id: recruitly_user(&s, &user.email).await,
+                    owner_id: my_recruitly_id(pool, &s, user.org_id, user.id).await.ok().flatten(),
                 };
                 // Marked first: if the answer is lost, a retry asks before making another.
                 let marked = step(
