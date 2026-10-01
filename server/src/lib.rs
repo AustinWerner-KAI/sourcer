@@ -17,6 +17,7 @@ pub mod plan;
 pub mod policy;
 pub mod ratelimit;
 pub mod recruitly;
+pub mod retune;
 pub mod roles;
 pub mod search;
 pub mod searching;
