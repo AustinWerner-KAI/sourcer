@@ -16,6 +16,10 @@ brief_version: number | null, to_review: number, shortlisted: number, rejected: 
  */
 unranked: number, 
 /**
+ * Ranked or shortlisted against an older brief; re-ranked automatically.
+ */
+stale: number, 
+/**
  * A ranking is queued or running.
  */
 ranking: boolean, 

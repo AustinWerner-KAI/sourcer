@@ -107,21 +107,27 @@ export function Candidates() {
               : "Confirm the brief to rank people."}
           </span>
         </div>
-        {v.unranked > 0 && (
+        {(v.unranked > 0 || v.stale > 0) && (
           <div className="rankstate" role="status">
             {v.ranking ? (
               <span>
-                Ranking {v.unranked} {v.unranked === 1 ? "person" : "people"}. This takes about a minute.
+                {v.unranked > 0
+                  ? `Ranking ${v.unranked} ${v.unranked === 1 ? "person" : "people"}.`
+                  : `Re-ranking ${v.stale} ${v.stale === 1 ? "person" : "people"} against brief version ${v.brief_version}.`}{" "}
+                This takes about a minute.
               </span>
             ) : v.rank_blocked ? (
               <span className="warnline">
-                {v.unranked} not ranked. {v.rank_blocked}
+                {v.unranked > 0 ? `${v.unranked} not ranked.` : `${v.stale} ranked against an older brief.`}{" "}
+                {v.rank_blocked}
               </span>
             ) : (
               <>
-                <span>{v.unranked} not ranked yet.</span>
+                <span>
+                  {v.unranked > 0 ? `${v.unranked} not ranked yet.` : `${v.stale} ranked against an older brief.`}
+                </span>
                 <button className="btn-ghost" onClick={() => rank.mutate()} disabled={rank.isPending}>
-                  {rank.isPending ? "Starting" : "Rank now"}
+                  {rank.isPending ? "Starting" : v.unranked > 0 ? "Rank now" : "Re-rank now"}
                 </button>
               </>
             )}
@@ -217,6 +223,11 @@ function Person({
           {p.do_not_contact && <span className="flag stop">Do not contact</span>}
           {p.known && <span className="flag known">{p.known}</span>}
           {p.employer_unknown && <span className="flag emp">Check employer</span>}
+          {p.stale_rank && (
+            <span className="flag emp" title="Scored against an older brief. A re-rank is due.">
+              Older brief
+            </span>
+          )}
           {tab === "rejected" && p.reject_reason && (
             <span className="flag emp">Rejected: {reasonLabel(p.reject_reason)}</span>
           )}

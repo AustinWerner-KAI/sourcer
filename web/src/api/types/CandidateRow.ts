@@ -54,7 +54,11 @@ contacts: Array<ContactLine>,
 /**
  * The latest CV assessment for this role, out of 10.
  */
-cv_score: number | null, reject_reason: ReasonCode | null, 
+cv_score: number | null, 
+/**
+ * The score is against an older brief; a re-rank is due.
+ */
+stale_rank: boolean, reject_reason: ReasonCode | null, 
 /**
  * What Recruitly knows about them, in words. `None` when not checked or not there.
  */

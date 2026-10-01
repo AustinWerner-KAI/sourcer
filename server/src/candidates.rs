@@ -147,7 +147,10 @@ impl RankHandler {
                 "SELECT c.id, p.id, p.current_title, p.current_employer, p.location, p.skills
                  FROM candidacy c JOIN person p ON p.id = c.person_id
                  WHERE c.role_id = $1 AND c.org_id = $2
-                   AND c.state IN ('found', 'known_checked') AND NOT (c.id = ANY($3))
+                   AND (c.state IN ('found', 'known_checked')
+                        OR (c.state IN ('ranked', 'shortlisted')
+                            AND (c.evidence->>'brief_version')::int IS DISTINCT FROM $5))
+                   AND NOT (c.id = ANY($3))
                  ORDER BY c.created_at, c.id
                  LIMIT $4
                  FOR UPDATE OF c SKIP LOCKED",
@@ -156,6 +159,7 @@ impl RankHandler {
             .bind(org_id)
             .bind(&tried)
             .bind(BATCH)
+            .bind(version)
             .fetch_all(&mut *tx)
             .await?;
             if people.is_empty() {
@@ -215,9 +219,14 @@ impl RankHandler {
                     continue;
                 };
                 sqlx::query(
-                    "UPDATE candidacy SET state = 'ranked', tier = $2, rank = $3, evidence = $4,
+                    // People already ranked or shortlisted keep their place;
+                    // only their scores move to the new brief.
+                    "UPDATE candidacy SET
+                            state = CASE WHEN state IN ('found', 'known_checked')
+                                         THEN 'ranked'::candidacy_state ELSE state END,
+                            tier = $2, rank = $3, evidence = $4,
                             ranked_at = now(), version = version + 1
-                     WHERE id = $1 AND state IN ('found', 'known_checked')",
+                     WHERE id = $1 AND state IN ('found', 'known_checked', 'ranked', 'shortlisted')",
                 )
                 .bind(candidacy)
                 .bind(r.tier)
@@ -289,6 +298,7 @@ struct Row {
     has_phone: bool,
     contacts: Vec<String>,
     cv_score: Option<i32>,
+    stale_rank: bool,
     dnc: bool,
     other_state: Option<String>,
     other_title: Option<String>,
@@ -313,6 +323,9 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
        (SELECT a.score FROM cv_assessment a JOIN cv v ON v.id = a.cv_id
         WHERE v.person_id = p.id AND a.role_id = c.role_id AND a.org_id = c.org_id
         ORDER BY v.created_at DESC LIMIT 1) AS cv_score,
+       (c.state IN ('ranked', 'shortlisted') AND (c.evidence->>'brief_version')::int IS DISTINCT FROM
+          (SELECT max(b.version) FROM brief b WHERE b.role_id = c.role_id AND b.confirmed_at IS NOT NULL)
+       ) AS stale_rank,
        (p.opted_out OR p.recruitly_dnc OR EXISTS (
           SELECT 1 FROM do_not_contact d
           WHERE d.org_id = c.org_id AND (
@@ -421,6 +434,7 @@ impl From<Row> for CandidateRow {
                 contact_lines(&r.contacts)
             },
             cv_score: r.cv_score,
+            stale_rank: r.stale_rank,
             reject_reason: r.reason,
             recruitly_note: r.recruitly_note,
             recruitly_checked: r.recruitly_checked_at.is_some(),
@@ -490,17 +504,23 @@ async fn view(
 ) -> anyhow::Result<CandidatesView> {
     let brief = confirmed_brief(pool, role_id).await?;
     let blocked = rank_blocked(pool, &state.ai, org_id, brief.is_some()).await?;
-    let (to_review, shortlisted, rejected, unranked): (i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT count(*) FILTER (WHERE state IN ('found', 'known_checked', 'ranked')),
-                count(*) FILTER (WHERE state = 'shortlisted'),
-                count(*) FILTER (WHERE state = 'rejected'),
-                count(*) FILTER (WHERE state IN ('found', 'known_checked'))
-         FROM candidacy WHERE role_id = $1 AND org_id = $2",
-    )
-    .bind(role_id)
-    .bind(org_id)
-    .fetch_one(pool)
-    .await?;
+    let (to_review, shortlisted, rejected, unranked, stale): (i64, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE state IN ('found', 'known_checked', 'ranked')),
+                    count(*) FILTER (WHERE state = 'shortlisted'),
+                    count(*) FILTER (WHERE state = 'rejected'),
+                    count(*) FILTER (WHERE state IN ('found', 'known_checked')),
+                    count(*) FILTER (WHERE state IN ('ranked', 'shortlisted')
+                                       AND (evidence->>'brief_version')::int IS DISTINCT FROM $3)
+             FROM candidacy WHERE role_id = $1 AND org_id = $2",
+        )
+        .bind(role_id)
+        .bind(org_id)
+        .bind(brief.as_ref().map(|b| b.1))
+        .fetch_one(pool)
+        .await?;
+    // With no confirmed brief there is nothing to re-rank against.
+    let stale = if brief.is_some() { stale } else { 0 };
     let (job_id, job_label): (Option<String>, Option<String>) = sqlx::query_as(
         "SELECT recruitly_job_id, recruitly_job_label FROM role WHERE id = $1 AND org_id = $2",
     )
@@ -508,6 +528,26 @@ async fn view(
     .bind(org_id)
     .fetch_one(pool)
     .await?;
+    // Scores against an older brief are re-ranked as soon as anyone looks,
+    // so a new brief never leaves old scores on screen for long.
+    // At most one try every ten minutes, so a ranking that keeps failing
+    // never pays again on every page load.
+    if stale > 0 && blocked.is_none() {
+        sqlx::query(
+            "INSERT INTO job (org_id, kind, payload)
+             SELECT $1, $2, $3
+             WHERE NOT EXISTS (SELECT 1 FROM job WHERE org_id = $1 AND kind = $2
+                                 AND payload->>'role_id' = $4
+                                 AND (status IN ('queued', 'running')
+                                      OR created_at > now() - interval '10 minutes'))",
+        )
+        .bind(org_id)
+        .bind(RANK_JOB)
+        .bind(json!({ "role_id": role_id }))
+        .bind(role_id.to_string())
+        .execute(pool)
+        .await?;
+    }
     let ranking: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM job WHERE org_id = $1 AND kind = $2
                           AND status IN ('queued', 'running') AND payload->>'role_id' = $3)",
@@ -524,6 +564,7 @@ async fn view(
         shortlisted,
         rejected,
         unranked,
+        stale,
         ranking,
         rank_blocked: blocked.map(String::from),
         people: rows_for_role(pool, org_id, role_id, tab).await?,
