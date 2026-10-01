@@ -346,6 +346,9 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
     add.mutate(next);
   };
   const busy = check.isPending || add.isPending;
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
+  const myId = me.data?.recruitly_user_id;
+  const mine = !!myId && p.recruitly_owner_id === myId;
   const target = job ? `${jobRef(job)} in Recruitly` : "Recruitly";
 
   // Three levels: stop (never add), check (look first) and clear.
@@ -365,8 +368,11 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
     flag = <span className="flag emp">Not checked in Recruitly</span>;
   } else if (p.recruitly_note) {
     // Already in Recruitly with an owner, stage or history: look before adding.
-    const clear = p.recruitly_note === "In Recruitly";
-    flag = <span className={`flag ${clear ? "rc" : "emp"}`}>{p.recruitly_note}</span>;
+    // Your own record needs no second look.
+    const clear = p.recruitly_note === "In Recruitly" || mine;
+    flag = (
+      <span className={`flag ${clear ? "rc" : "emp"}`}>{mine ? ownedByYou(p.recruitly_note) : p.recruitly_note}</span>
+    );
   } else {
     flag = <span className="flag rc">Not in Recruitly</span>;
   }
@@ -436,6 +442,9 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
     </div>
   );
 }
+
+/** "In Recruitly: owned by Sam Lee · Placed" as "In Recruitly: owned by you · Placed". */
+export const ownedByYou = (note: string) => note.replace(/owned by [^·]+?(?=( · |$))/, "owned by you");
 
 const VERDICT: Record<CheckVerdict, { mark: string; label: string }> = {
   met: { mark: "✓", label: "Met" },

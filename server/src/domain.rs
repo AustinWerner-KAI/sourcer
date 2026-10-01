@@ -91,6 +91,8 @@ pub struct Me {
     pub email: String,
     /// "admin" or "resourcer".
     pub role: String,
+    /// Their own user in Recruitly, once known, to tell their records from a colleague's.
+    pub recruitly_user_id: Option<String>,
 }
 
 /// What a user may do. Admins also manage the team.
@@ -497,6 +499,8 @@ pub struct CandidateRow {
     pub reject_reason: Option<ReasonCode>,
     /// What Recruitly knows about them, in words. `None` when not checked or not there.
     pub recruitly_note: Option<String>,
+    /// The Recruitly user who owns their record, to compare with `Me`.
+    pub recruitly_owner_id: Option<String>,
     pub recruitly_checked: bool,
     /// The last check could not reach Recruitly.
     pub recruitly_check_failed: bool,
