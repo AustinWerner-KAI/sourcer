@@ -322,11 +322,27 @@ function Plan({ lines, lockedOut }: { lines: BriefLines; lockedOut: LockedOut[] 
     <>
       <div className="grp">Narrows the search</div>
       <dl className="q">
+        {lines.titles.length > 0 && (
+          <>
+            <dt>Title (any)</dt>
+            <dd>
+              <b>{lines.titles.join(", ")}</b>
+            </dd>
+          </>
+        )}
         <dt>Title has</dt>
         <dd>
           <b>{lines.levels.join(", ")}</b>
           {lines.excluded_titles.length > 0 && <>, not {lines.excluded_titles.join(", ")}</>}
         </dd>
+        {lines.min_years !== null && lines.min_years > 0 && (
+          <>
+            <dt>Experience</dt>
+            <dd>
+              <b>{lines.min_years}+ years</b>
+            </dd>
+          </>
+        )}
         {required.length > 0 && (
           <>
             <dt>Knows</dt>
@@ -361,6 +377,12 @@ function Plan({ lines, lockedOut }: { lines: BriefLines; lockedOut: LockedOut[] 
           <>
             <dt>Capabilities</dt>
             <dd>{lines.capabilities.join(", ")}</dd>
+          </>
+        )}
+        {lines.frameworks.length + lines.certifications.length > 0 && (
+          <>
+            <dt>Standards</dt>
+            <dd>{[...lines.frameworks, ...lines.certifications].join(", ")}</dd>
           </>
         )}
         {nice.length + plus.length > 0 && (
