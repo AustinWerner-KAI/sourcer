@@ -202,7 +202,7 @@ async fn a_role_starts_from_a_recruitly_job_with_its_client_and_spec() {
     );
     assert_eq!(
         p["spec_text"],
-        "Lead IAM & PAM.\n\nLocation: Dubai\nPay: 30000 to 40000 AED\nRecruitly job: J-1042"
+        "Lead IAM & PAM.\n\nLocation: Dubai\nPay: 30,000 to 40,000 AED\nRecruitly job: J-1042"
     );
     let nothing: i64 = sqlx::query_scalar("SELECT count(*) FROM role WHERE org_id = $1")
         .bind(org)
