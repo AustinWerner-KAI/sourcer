@@ -1,10 +1,11 @@
 //! Turn a confirmed brief into People Data Labs searches (SRS F5, F8).
 //!
-//! What narrows the search: title levels (minus excluded titles), required
-//! tools, Must domains (any one of them), employer types and location. The
-//! hiring client, off-limits clients and the leave-out list are always
-//! excluded. Must-haves, capabilities, nice-to-have tools and Plus domains
-//! only rank, later. Each location is its own search, so a small market such
+//! What narrows the search: job titles (any one), title levels (any one,
+//! minus excluded titles), fewest years, required tools, Must domains (any
+//! one of them), employer types and location. The hiring client, off-limits
+//! clients and the leave-out list are always excluded. Must-haves,
+//! capabilities, nice-to-have tools, standards, certifications and Plus
+//! domains only rank, later. Each location is its own search, so a small market such
 //! as Dubai is counted and pulled on its own.
 //!
 //! Pure, so it is tested without a network.
@@ -90,6 +91,15 @@ pub fn plan(lines: &BriefLines, locked_out: &[Company]) -> Vec<LocationSearch> {
     let mut must: Vec<Value> = Vec::new();
     let mut must_not: Vec<Value> = Vec::new();
 
+    if !lines.titles.is_empty() {
+        must.push(any_of(
+            lines
+                .titles
+                .iter()
+                .map(|t| phrase("job_title", t))
+                .collect(),
+        ));
+    }
     if !lines.levels.is_empty() {
         must.push(any_of(
             lines
@@ -100,6 +110,9 @@ pub fn plan(lines: &BriefLines, locked_out: &[Company]) -> Vec<LocationSearch> {
         ));
     }
     must_not.extend(lines.excluded_titles.iter().map(|t| phrase("job_title", t)));
+    if let Some(years) = lines.min_years.filter(|y| *y > 0) {
+        must.push(json!({"range": {"inferred_years_experience": {"gte": years}}}));
+    }
 
     for tool in lines
         .tools
@@ -187,6 +200,11 @@ mod tests {
 
     fn brief() -> BriefLines {
         BriefLines {
+            titles: vec!["Security Engineer".into(), "DevSecOps Engineer".into()],
+            min_years: Some(7),
+            frameworks: vec!["DORA".into()],
+            certifications: vec!["CISSP".into()],
+            analysis: "Hands-on role.".into(),
             levels: vec!["Senior".into(), "Lead".into()],
             excluded_titles: vec!["Director".into()],
             must_haves: vec!["Cloud security".into()],
@@ -249,7 +267,14 @@ mod tests {
     #[test]
     fn required_tools_and_must_domains_narrow_the_rest_only_rank() {
         let q = text(&plan(&brief(), &[])[0].query);
-        for narrows in ["okta", "privileged access", "senior", "lead"] {
+        for narrows in [
+            "okta",
+            "privileged access",
+            "senior",
+            "lead",
+            "security engineer",
+            "devsecops engineer",
+        ] {
             assert!(q.contains(narrows), "{narrows} should be in the search");
         }
         for ranks in [
@@ -258,9 +283,36 @@ mod tests {
             "custody",
             "mentoring",
             "cloud security",
+            "dora",
+            "cissp",
+            "hands-on",
         ] {
             assert!(!q.contains(ranks), "{ranks} should only rank");
         }
+    }
+
+    #[test]
+    fn a_title_and_a_level_must_both_match() {
+        let q = plan(&brief(), &[]).remove(0).query;
+        let must = q["bool"]["must"].as_array().unwrap();
+        let titles = text(&must[0]);
+        assert!(titles.contains("\"job_title\":\"security engineer\""));
+        assert!(!titles.contains("senior"), "titles and levels are separate");
+        assert!(text(&must[1]).contains("\"job_title\":\"senior\""));
+    }
+
+    #[test]
+    fn fewest_years_narrows_and_none_does_not() {
+        let q = text(&plan(&brief(), &[])[0].query);
+        assert!(
+            q.contains("\"inferred_years_experience\":{\"gte\":7}"),
+            "{q}"
+        );
+        let mut b = brief();
+        b.min_years = None;
+        assert!(!text(&plan(&b, &[])[0].query).contains("inferred_years_experience"));
+        b.min_years = Some(0);
+        assert!(!text(&plan(&b, &[])[0].query).contains("inferred_years_experience"));
     }
 
     #[test]
