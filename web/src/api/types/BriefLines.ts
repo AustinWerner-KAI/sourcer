@@ -3,17 +3,33 @@ import type { BriefDomain } from "./BriefDomain";
 import type { BriefTool } from "./BriefTool";
 
 /**
- * The brief check (SRS F3), as the resourcer edits it.
+ * The brief check (SRS F3), as the resourcer edits it. Lines added later
+ * default to empty, so a page loaded before an update can still save.
  */
 export type BriefLines = { 
 /**
- * 1. Seniority titles to search, e.g. "Senior", "Lead", "Principal".
+ * Claude's short read of the spec: what the search has to find and why.
+ * Shown above the brief; never searched.
+ */
+analysis: string, 
+/**
+ * Line 1: job titles to search, the spec's own and close variants, e.g.
+ * "Cloud Security Engineer". A person's title must contain one.
+ */
+titles: Array<string>, 
+/**
+ * Seniority words, e.g. "Senior", "Lead", "Principal". The title must
+ * also contain one.
  */
 levels: Array<string>, 
 /**
  * Titles never searched, e.g. "Director", "VP".
  */
 excluded_titles: Array<string>, 
+/**
+ * Fewest years of work experience, if the spec says. Narrows the search.
+ */
+min_years: number | null, 
 /**
  * 2. Up to three, most important first.
  */
@@ -31,10 +47,19 @@ domains: Array<BriefDomain>,
  */
 tools: Array<BriefTool>, 
 /**
- * 6. Cities, and whether remote counts.
+ * Line 6: standards and regulations, e.g. "NIST CSF", "DORA". Rank
+ * only, as few profiles list them.
+ */
+frameworks: Array<string>, 
+/**
+ * Certifications the spec asks for, e.g. "CISSP". Rank only.
+ */
+certifications: Array<string>, 
+/**
+ * 7. Cities, and whether remote counts.
  */
 locations: Array<string>, remote: boolean, 
 /**
- * 7. Kinds of employer to search, and companies to leave out.
+ * 8. Kinds of employer to search, and companies to leave out.
  */
 employer_types: Array<string>, leave_out: Array<string>, };

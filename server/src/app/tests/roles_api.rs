@@ -84,6 +84,22 @@ async fn brief_is_confirmed_only_when_every_tool_is_answered_then_locks() {
     )
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST, "a domain is needed");
+    let mut no_title = lines(Some("required"));
+    no_title["titles"] = json!([]);
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &confirm,
+            &me,
+            json!({"lines": no_title, "based_on": 1}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let msg =
+        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(msg.contains("job title"), "a title is needed: {msg}");
     let res = send(
         &app,
         json_req("POST", &confirm, &me, confirming(None, Some(1))),
@@ -263,6 +279,9 @@ async fn claude_drafts_the_brief_from_the_spec() {
         "/v1/messages",
         post(|| async {
             Json(json!({"content": [{"type": "tool_use", "id": "t", "name": "record_brief", "input": {
+                "analysis": "Hands-on IAM engineer for a Dubai trading firm.",
+                "titles": ["IAM Engineer", "Identity Engineer"], "min_years": 6,
+                "frameworks": ["ISO 27001"], "certifications": ["CISSP"],
                 "levels": ["Senior"], "must_haves": ["IAM"], "tools": ["Okta"],
                 "locations": ["Dubai"], "remote": false
             }}]}))
@@ -290,6 +309,26 @@ async fn claude_drafts_the_brief_from_the_spec() {
 
     let d = json_body(send(&app, json_req("POST", &draft, &me, json!({}))).await).await;
     assert_eq!(d["brief"]["drafted_by_ai"], true);
+    let l = &d["brief"]["lines"];
+    assert_eq!(
+        (
+            &l["titles"],
+            &l["min_years"],
+            &l["frameworks"],
+            &l["certifications"]
+        ),
+        (
+            &json!(["IAM Engineer", "Identity Engineer"]),
+            &json!(6),
+            &json!(["ISO 27001"]),
+            &json!(["CISSP"])
+        ),
+        "the new lines are stored and read back"
+    );
+    assert_eq!(
+        l["analysis"],
+        "Hands-on IAM engineer for a Dubai trading firm."
+    );
     assert_eq!(
         d["brief"]["lines"]["tools"],
         json!([{"name": "Okta", "status": null}])

@@ -26,7 +26,12 @@ const WEIGHT_CHOICES: { value: DomainWeight; label: string }[] = [
 ];
 
 const empty: BriefLines = {
+  analysis: "",
+  titles: [],
   levels: [],
+  min_years: null,
+  frameworks: [],
+  certifications: [],
   excluded_titles: ["Manager", "Director", "Head of", "VP", "Chief"],
   must_haves: [],
   capabilities: [],
@@ -41,6 +46,7 @@ const empty: BriefLines = {
 /** The same checks the server makes before confirming. */
 export function problems(l: BriefLines): string[] {
   const out: string[] = [];
+  if (l.titles.length === 0) out.push("Add at least one job title to search.");
   if (l.levels.length === 0) out.push("Choose at least one level.");
   if (l.must_haves.length === 0) out.push("Add at least one must-have.");
   if (l.must_haves.length > 3) out.push("Keep to three must-haves.");
@@ -142,7 +148,7 @@ export function BriefEditor() {
     if (
       replacing &&
       !window.confirm(
-        "Draft again from the spec? Levels, must-haves, capabilities, domains, tools and locations are replaced. Your tool answers, Must or Plus choices, employer types and leave-out list are kept.",
+        "Draft again from the spec? Claude's read, titles, levels, years, must-haves, capabilities, domains, tools, standards, certifications and locations are replaced. Your tool answers, Must or Plus choices, excluded titles, employer types and leave-out list are kept.",
       )
     )
       return;
@@ -217,9 +223,14 @@ export function BriefEditor() {
               }}
             />
           </label>
+          {draft.isPending && (
+            <p className="hint" role="status">
+              This can take a minute or two.
+            </p>
+          )}
           <div className="actions-row">
             <button className="btn-ghost" onClick={redraft} disabled={busy || !spec.trim()}>
-              {draft.isPending ? "Drafting" : brief ? "Draft the brief again" : "Draft the brief"}
+              {draft.isPending ? "Claude is reading the spec" : brief ? "Draft the brief again" : "Draft the brief"}
             </button>
             <button className="link-button" onClick={() => run(() => saveRole.mutate(null))} disabled={busy || !roleDirty}>
               Save spec
@@ -246,15 +257,46 @@ export function BriefEditor() {
               ) : brief?.drafted_by_ai ? (
                 <div className="notice">Claude drafted this brief from the spec. Check each line.</div>
               ) : null}
+              {lines.analysis && (
+                <div className="read">
+                  <div className="lbl">Claude's read of the spec</div>
+                  <p>{lines.analysis}</p>
+                </div>
+              )}
 
-              <Line n={1} title="Level" hint="Hands-on levels to search. Crossed out titles are never searched.">
+              <Line
+                n={1}
+                title="Title"
+                hint="A person is found only if their title has one of these job titles and one of these levels. Crossed out titles are never searched."
+              >
+                <div className="lbl">Job titles</div>
+                <ChipList items={lines.titles} onChange={(titles) => set({ titles })} add="Add job title" tone="yes" />
+                <div className="lbl">Levels</div>
                 <ChipList items={lines.levels} onChange={(levels) => set({ levels })} add="Add level" tone="yes" />
+                <div className="lbl">Never</div>
                 <ChipList
                   items={lines.excluded_titles}
                   onChange={(excluded_titles) => set({ excluded_titles })}
                   add="Exclude a title"
                   tone="no"
                 />
+                <label className="check yrs">
+                  At least
+                  <input
+                    className="in"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={40}
+                    value={lines.min_years ?? ""}
+                    aria-label="Fewest years of experience"
+                    onChange={(e) => {
+                      const n = e.target.value === "" ? null : Math.round(Number(e.target.value));
+                      set({ min_years: n === null || Number.isNaN(n) ? null : Math.min(40, Math.max(0, n)) });
+                    }}
+                  />
+                  years' experience (leave blank if the spec doesn't say)
+                </label>
               </Line>
 
               <Line n={2} title="Top three must-haves" hint="In order of weight. Use the arrows to reorder.">
@@ -356,7 +398,28 @@ export function BriefEditor() {
                 />
               </Line>
 
-              <Line n={6} title="Location">
+              <Line
+                n={6}
+                title="Standards and certifications"
+                hint="Frameworks, regulations and certifications the spec names. Used to rank and explain, not to filter: few profiles list them."
+              >
+                <div className="lbl">Standards and regulations</div>
+                <ChipList
+                  items={lines.frameworks}
+                  onChange={(frameworks) => set({ frameworks })}
+                  add="Add standard"
+                  tone="yes"
+                />
+                <div className="lbl">Certifications</div>
+                <ChipList
+                  items={lines.certifications}
+                  onChange={(certifications) => set({ certifications })}
+                  add="Add certification"
+                  tone="yes"
+                />
+              </Line>
+
+              <Line n={7} title="Location">
                 <ChipList items={lines.locations} onChange={(locations) => set({ locations })} add="Add city" tone="yes" />
                 <label className="check">
                   <input type="checkbox" checked={lines.remote} onChange={(e) => set({ remote: e.target.checked })} />
@@ -367,7 +430,7 @@ export function BriefEditor() {
                 )}
               </Line>
 
-              <Line n={7} title="Employer type">
+              <Line n={8} title="Employer type">
                 <div className="lbl">Search in</div>
                 <div className="chips">
                   {[...EMPLOYER_OPTIONS, ...lines.employer_types.filter((t) => !EMPLOYER_OPTIONS.includes(t))].map(

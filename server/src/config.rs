@@ -26,6 +26,8 @@ pub struct Config {
     pub anthropic_api_key: Option<String>,
     /// Optional override of the Claude model.
     pub anthropic_model: Option<String>,
+    /// Model that drafts briefs; Opus unless set.
+    pub anthropic_draft_model: Option<String>,
     /// Recruitly, the team's CRM and ATS (D10). Off until this is set.
     pub recruitly_api_key: Option<String>,
     /// Most Recruitly calls per day. Defaults below the plan's limit.
@@ -48,6 +50,7 @@ impl std::fmt::Debug for Config {
             .field("admin_email", &self.admin_email)
             .field("anthropic_api_key", &set(&self.anthropic_api_key))
             .field("anthropic_model", &self.anthropic_model)
+            .field("anthropic_draft_model", &self.anthropic_draft_model)
             .field("recruitly_api_key", &set(&self.recruitly_api_key))
             .field("recruitly_daily_cap", &self.recruitly_daily_cap)
             .finish()
@@ -75,6 +78,7 @@ impl Config {
             admin_email: secret("ADMIN_EMAIL"),
             anthropic_api_key: secret("ANTHROPIC_API_KEY"),
             anthropic_model: secret("ANTHROPIC_MODEL"),
+            anthropic_draft_model: secret("ANTHROPIC_DRAFT_MODEL"),
             recruitly_api_key: secret("RECRUITLY_API_KEY"),
             recruitly_daily_cap: match secret("RECRUITLY_DAILY_CAP") {
                 Some(v) => Some(
@@ -139,6 +143,7 @@ mod tests {
             admin_email: None,
             anthropic_api_key: Some("sk-ant-secret".into()),
             anthropic_model: None,
+            anthropic_draft_model: None,
             recruitly_api_key: Some("rc-secret".into()),
             recruitly_daily_cap: None,
         };
@@ -177,6 +182,7 @@ mod tests {
             admin_email: None,
             anthropic_api_key: None,
             anthropic_model: None,
+            anthropic_draft_model: None,
             recruitly_api_key: None,
             recruitly_daily_cap: None,
         };
