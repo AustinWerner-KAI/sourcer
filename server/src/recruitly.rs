@@ -54,6 +54,16 @@ impl std::fmt::Display for RecruitlyError {
 
 impl std::error::Error for RecruitlyError {}
 
+/// Recruitly's own message, cut short, with the key taken out in case it echoes the address.
+fn scrub(message: &str, key: &str) -> String {
+    let cleaned = if key.is_empty() {
+        message.to_string()
+    } else {
+        message.replace(key, "[key]")
+    };
+    cleaned.chars().take(200).collect()
+}
+
 type R<T> = Result<T, RecruitlyError>;
 
 pub struct Recruitly {
@@ -75,7 +85,8 @@ impl Recruitly {
                 .timeout(TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_default(),
+                // Only fails if TLS cannot start; never fall back to a client that follows redirects.
+                .expect("Recruitly HTTP client"),
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
             daily_cap: daily_cap.unwrap_or(DEFAULT_DAILY_CAP).max(0),
@@ -179,7 +190,7 @@ impl Session<'_> {
             .get("message")
             .or_else(|| v.get("error"))
             .and_then(Value::as_str)
-            .map(|m| m.chars().take(200).collect::<String>())
+            .map(|m| scrub(m, key))
             .unwrap_or_default();
         match status {
             200..=299 => {}
@@ -676,7 +687,10 @@ mod tests {
 
     #[test]
     fn errors_never_show_the_key() {
-        let e = RecruitlyError::Network("error sending request".into());
-        assert!(!e.to_string().contains("apiKey"));
+        let echoed = "Bad request for /api/candidates?apiKey=sk-secret-123&query=x";
+        let e = RecruitlyError::Http(400, scrub(echoed, "sk-secret-123"));
+        assert!(!e.to_string().contains("sk-secret-123"));
+        assert!(e.to_string().contains("[key]"));
+        assert_eq!(scrub(&"x".repeat(500), "k").len(), 200);
     }
 }
