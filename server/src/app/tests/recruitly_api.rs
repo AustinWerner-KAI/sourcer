@@ -65,7 +65,7 @@ async fn fake_recruitly(f: Arc<FakeRc>) -> String {
                 let parts: Vec<&str> = path.trim_start_matches("/api/nova/").split('/').collect();
                 let res = match (method.as_str(), parts.as_slice()) {
                     ("GET", ["users", "me"]) => ok(json!({"id": "u-kai", "firstName": "Kai"})),
-                    ("GET", ["users"]) => {
+                    ("GET", ["users", "list"]) => {
                         ok(json!([{"id": "u-me", "email": f.me_email.lock().unwrap().clone()},
                                   {"id": "u-teo", "email": "teo@example.com"}]))
                     }
