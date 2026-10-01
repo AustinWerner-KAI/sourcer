@@ -37,6 +37,9 @@ use crate::{
     team::Admin,
 };
 
+/// How long a Recruitly answer counts for the connection light.
+const SEEN_FOR: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// Work emails searched for per person, at most.
 const MAX_EMAILS_SEARCHED: usize = 2;
 
@@ -89,16 +92,34 @@ fn ready(state: &AppState) -> Result<&PgPool, Response> {
 
 // ---------- Status ----------
 
-/// GET /api/recruitly/status: whether it is set up and today's calls. No call is made.
+/// GET /api/recruitly/status: whether it is set up and connected, and today's
+/// calls. At most one call every ten minutes, and none while other calls show
+/// the connection.
 pub async fn status(State(state): State<AppState>, user: CurrentUser) -> Response {
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let rc = &state.recruitly;
+    // Known from any call in the last ten minutes; otherwise one cheap call to find out.
+    let connected = if !rc.configured() {
+        None
+    } else {
+        match rc.seen_within(SEEN_FOR) {
+            Some(ok) => Some(ok),
+            None => match rc.session(pool, user.org_id).me().await {
+                Ok(_) => Some(true),
+                // Our own cap or Recruitly's limit says nothing about the key.
+                Err(RecruitlyError::Limit) => None,
+                Err(_) => Some(false),
+            },
+        }
+    };
     match recruitly::calls_today(pool, user.org_id).await {
         Ok(calls_today) => Json(RecruitlyStatus {
-            configured: state.recruitly.configured(),
+            configured: rc.configured(),
             calls_today,
-            daily_cap: state.recruitly.daily_cap,
+            daily_cap: rc.daily_cap,
+            connected,
         })
         .into_response(),
         Err(e) => server_error(e),
