@@ -368,3 +368,32 @@ ul.joblist { list-style: none; margin: 14px 0 0; padding: 0; }
   .cvline { margin-left: -56px; }
   .cvpanel, .cvup { padding: 12px; }
 }
+
+/* Outreach: the email line on shortlisted cards, the three emails, and Settings. */
+.emline { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.emline .lbl2 { font-size: 12px; color: var(--muted); margin-right: 4px; }
+.emline .rcadd { grid-column: 2; }
+.emline .form-error, .panel .emline .form-error { grid-column: 1 / -1; margin: 0; }
+.seq { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
+.seqhead { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); }
+.seqhead strong { color: var(--text); font-weight: 600; }
+.mail { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mailhead { display: flex; gap: 10px; align-items: baseline; }
+.mailhead .n { font-size: 13px; font-weight: 600; }
+.mailhead .d { font-size: 12px; color: var(--muted); }
+.mail .subj { font-size: 14px; font-weight: 600; }
+textarea.in.mailbody { resize: vertical; line-height: 1.5; font-size: 14px; }
+.mailview { padding: 4px 16px; border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.mailview a { color: #0b57d0; text-decoration: underline; }
+.mail .dirty, .panel p.seqnote { font-size: 13px; color: var(--muted); margin: 0; }
+.problems, .notes { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.problems { color: var(--stop); }
+.notes { color: var(--warn); }
+.seqacts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.btn-ghost.go { background: var(--gold); color: #000; }
+textarea.in.sig { resize: vertical; line-height: 1.5; font-size: 14px; font-family: inherit; }
+label.f .hint { font-size: 12px; color: var(--muted); }
+.saved { color: var(--ok); font-size: 13px; margin-left: 10px; }
+.panel .mailview p { margin: 12px 0; color: #222; line-height: 1.45; }
+@media (max-width: 600px) { .seq { padding: 12px; margin: 0 -8px; } .mailview { padding: 2px 12px; } }
+@media (max-width: 768px) { .emline { grid-template-columns: 1fr; } .emline .rcadd { grid-column: 1; justify-self: start; } }
