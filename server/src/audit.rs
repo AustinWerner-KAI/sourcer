@@ -33,6 +33,9 @@ pub mod action {
     pub const ROLE_JOB_LINKED: &str = "role.recruitly_link";
     pub const PERSON_RECRUITLY_CHECKED: &str = "person.recruitly_check";
     pub const CANDIDATE_HANDED_OVER: &str = "candidate.handover";
+    pub const CV_ASSESSED: &str = "cv.assess";
+    pub const CV_FEEDBACK: &str = "cv.feedback";
+    pub const CV_NOTED: &str = "cv.recruitly_note";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.

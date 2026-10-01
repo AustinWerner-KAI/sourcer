@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     middleware,
     routing::{get, patch, post, put},
     Json, Router,
@@ -16,7 +16,7 @@ use crate::{
     ai::Claude,
     auth,
     auth::AuthConfig,
-    candidates, crm,
+    candidates, crm, cv,
     domain::Health,
     people,
     ratelimit::{self, RateLimiter},
@@ -137,6 +137,15 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
             post(crm::check_again),
         )
         .route("/api/candidates/:id/handover", post(crm::handover))
+        .route(
+            "/api/candidates/:id/cv",
+            get(cv::get_cv)
+                .post(cv::upload)
+                .layer(DefaultBodyLimit::max(cv::MAX_CV_BYTES + 1024)),
+        )
+        .route("/api/candidates/:id/cv/assess", post(cv::assess_more))
+        .route("/api/candidates/:id/cv/recruitly", post(cv::to_recruitly))
+        .route("/api/cv-assessments/:id/feedback", put(cv::feedback))
         .with_state(state);
     let api = api.layer(middleware::from_fn(require_change_header));
     let app = match web_dir {

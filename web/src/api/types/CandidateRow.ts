@@ -50,7 +50,11 @@ employer_unknown: boolean, has_work_email: boolean, has_phone: boolean,
  * Work email, personal emails and phones, work first. Empty for anyone
  * who must not be contacted.
  */
-contacts: Array<ContactLine>, reject_reason: ReasonCode | null, 
+contacts: Array<ContactLine>, 
+/**
+ * The latest CV assessment for this role, out of 10.
+ */
+cv_score: number | null, reject_reason: ReasonCode | null, 
 /**
  * What Recruitly knows about them, in words. `None` when not checked or not there.
  */
