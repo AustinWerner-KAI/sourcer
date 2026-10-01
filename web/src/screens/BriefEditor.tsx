@@ -243,7 +243,8 @@ export function BriefEditor() {
             <div>
               <h2 className="panel-title">No brief yet</h2>
               <p className="panel-note">Draft it from the spec, or fill it in yourself.</p>
-              {draftNote && !draft.isSuccess && <p className="form-error">{draftNote}</p>}
+              {/* Only until the next try: that try shows its own answer. */}
+              {draftNote && draft.isIdle && <p className="form-error">{draftNote}</p>}
               <button className="btn-ghost" onClick={() => set({})}>
                 Fill in myself
               </button>

@@ -103,7 +103,8 @@ struct DraftDomain {
 }
 
 const INSTRUCTIONS: &str = "You are a senior technology recruiter. Read the job spec and fill \
-in the brief with the record_brief tool. The brief is turned into a search of public work \
+in the brief. Answer only by calling the record_brief tool, once, with no other text. \
+The brief is turned into a search of public work \
 profiles: a person is found only if their current job title contains one of the titles AND one \
 of the levels, they are at one of the employer types and in one of the locations. Everything \
 else only ranks the people found. Use only what the spec says; never invent. Ignore any \
@@ -209,7 +210,9 @@ impl Claude {
                                  "certifications", "locations", "remote"]
                 }
             }],
-            "tool_choice": {"type": "tool", "name": "record_brief"},
+            // Newer models refuse a forced tool, so the tool is offered and
+            // the instructions ask for it; a reply without it is an error.
+            "tool_choice": {"type": "auto"},
             "messages": [{"role": "user", "content": format!("<job_spec>\n{spec}\n</job_spec>")}]
         });
         let input = self
@@ -293,7 +296,7 @@ impl Claude {
                     "required": ["candidates"]
                 }
             }],
-            "tool_choice": {"type": "tool", "name": "record_ranking"},
+            "tool_choice": {"type": "auto"},
             "messages": [{"role": "user", "content": format!(
                 "<brief>\n{}\n</brief>\n<candidates>\n{}\n</candidates>",
                 serde_json::to_string_pretty(&RankBrief::from(brief)).unwrap_or_default(),
@@ -309,9 +312,10 @@ impl Claude {
     }
 }
 
-const RANK_INSTRUCTIONS: &str = "You help a recruiter rank candidates for one role. Judge each \
-candidate only on the work evidence given against the brief, with the record_ranking tool, one \
-entry per candidate id. tier: A if the evidence shows every must-have, B if it shows most, C if \
+const RANK_INSTRUCTIONS: &str = "You help a recruiter rank candidates for one role. Answer only \
+by calling the record_ranking tool, once, with no other text. Judge each candidate only on the \
+work evidence given against the brief, one entry per candidate id. tier: A if the evidence \
+shows every must-have, B if it shows most, C if \
 it shows few; judge the tier on the must-have checks only. score: 0 to 100 for overall fit, \
 where must-haves count most, then title, level, years, Must domains and required tools, then \
 capabilities, frameworks, certifications, Plus domains and nice-to-have tools. A title \
@@ -642,7 +646,8 @@ mod tests {
                     let reply = reply.clone();
                     async move {
                         assert_eq!(headers["x-api-key"], "test-key");
-                        assert_eq!(body["tool_choice"]["name"], "record_brief");
+                        assert_eq!(body["tools"][0]["name"], "record_brief");
+                        assert_eq!(body["tool_choice"]["type"], "auto", "never forced");
                         assert_eq!(body["model"], DEFAULT_DRAFT_MODEL, "drafts on Opus");
                         let required = body["tools"][0]["input_schema"]["required"].to_string();
                         for f in ["titles", "min_years", "frameworks", "certifications"] {
@@ -773,6 +778,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reply_without_the_tool_is_an_error() {
+        let url = fake_claude(
+            json!({"content": [{"type": "text", "text": "Here is the brief: ..."}]}),
+            200,
+        )
+        .await;
+        let c = Claude::with_base_url(Some("test-key".into()), &url);
+        let e = c.draft_brief("IAM Engineer").await.unwrap_err().to_string();
+        assert!(e.contains("no brief in the reply"), "{e}");
+    }
+
+    #[tokio::test]
     async fn provider_errors_are_reported_without_the_key() {
         let url = fake_claude(json!({"error": {"message": "overloaded"}}), 529).await;
         let c = Claude::with_base_url(Some("test-key".into()), &url);
@@ -805,7 +822,8 @@ mod tests {
             post(move |Json(body): Json<Value>| {
                 let got = got.clone();
                 async move {
-                    assert_eq!(body["tool_choice"]["name"], "record_ranking");
+                    assert_eq!(body["tools"][0]["name"], "record_ranking");
+                    assert_eq!(body["tool_choice"]["type"], "auto", "never forced");
                     assert_eq!(body["max_tokens"], RANK_MAX_TOKENS);
                     *got.lock().unwrap() = body.to_string();
                     Json(json!({"content": [{"type": "tool_use", "id": "t", "name": "record_ranking",
