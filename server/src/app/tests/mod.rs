@@ -12,6 +12,7 @@ use uuid::Uuid;
 mod auth_api;
 mod candidates_api;
 mod cv_api;
+mod outreach_api;
 mod people_api;
 mod recruitly_api;
 mod roles_api;
