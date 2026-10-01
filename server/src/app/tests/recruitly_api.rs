@@ -420,6 +420,11 @@ async fn shortlisting_checks_recruitly_and_do_not_contact_there_blocks_it() {
     let msg =
         String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
     assert!(!msg.contains("rk") && msg.contains("Recruitly"), "{msg}");
+    let s = json_body(send(&app, get_req("/api/recruitly/status", Some(&me))).await).await;
+    assert_eq!(
+        s["connected"], false,
+        "Recruitly failing shows as not connected"
+    );
     f.down.store(false, Ordering::SeqCst);
     let res = send(&app, json_req("POST", &uri2, &me, json!({}))).await;
     assert_eq!(json_body(res).await["recruitly_check_failed"], false);
@@ -665,11 +670,13 @@ async fn the_daily_cap_stops_calls_and_status_shows_the_count() {
         ),
         (Some(true), Some(2), Some(2))
     );
+    assert_eq!(s["connected"], true, "known from the calls just made");
 
     // Without a key nothing is called, and the screens say so.
     let off = plain_app(pool.clone());
     let s = json_body(send(&off, get_req("/api/recruitly/status", Some(&me))).await).await;
     assert_eq!(s["configured"], false);
+    assert_eq!(s["connected"], Value::Null);
     let res = send(&off, get_req("/api/recruitly/jobs", Some(&me))).await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
