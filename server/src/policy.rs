@@ -17,6 +17,9 @@ pub struct SendCheck {
     /// Any inbound touch on any channel since the sequence started, including a
     /// reply the resourcer marked by hand on LinkedIn or WhatsApp.
     pub replied_any_channel: bool,
+    /// For email: the address is a personal email. Outreach email goes only
+    /// to personal addresses (Kai, 1 Oct 2026). Ignored for other channels.
+    pub to_personal_email: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,6 +30,7 @@ pub enum Blocked {
     SendingPaused,
     NotApproved,
     AlreadyReplied,
+    NotPersonalEmail,
 }
 
 pub fn may_send(c: SendCheck) -> Result<(), Blocked> {
@@ -48,8 +52,11 @@ pub fn may_send(c: SendCheck) -> Result<(), Blocked> {
     if c.replied_any_channel {
         return Err(Blocked::AlreadyReplied);
     }
-    // Personal emails may be used like work emails (Kai, 1 Oct 2026); every
-    // check above still applies to them.
+    // Email goes only to a personal address (Kai, 1 Oct 2026); every check
+    // above still applies to it.
+    if c.channel == Channel::Email && !c.to_personal_email {
+        return Err(Blocked::NotPersonalEmail);
+    }
     Ok(())
 }
 
@@ -76,12 +83,33 @@ mod tests {
             org_sending_paused: false,
             sequence_approved: true,
             replied_any_channel: false,
+            to_personal_email: true,
         }
     }
 
     #[test]
-    fn approved_work_email_can_send() {
+    fn approved_personal_email_can_send() {
         assert_eq!(may_send(ok()), Ok(()));
+    }
+
+    #[test]
+    fn email_goes_only_to_a_personal_address() {
+        assert_eq!(
+            may_send(SendCheck {
+                to_personal_email: false,
+                ..ok()
+            }),
+            Err(Blocked::NotPersonalEmail)
+        );
+        // Other channels have no email address to check.
+        assert_eq!(
+            may_send(SendCheck {
+                channel: Channel::Linkedin,
+                to_personal_email: false,
+                ..ok()
+            }),
+            Ok(())
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ import { BriefEditor } from "./screens/BriefEditor";
 import { Search } from "./screens/Search";
 import { Candidates } from "./screens/Candidates";
 import { CandidateRoles } from "./screens/CandidateRoles";
+import { Settings } from "./screens/Outreach";
 import { useParams } from "react-router-dom";
 
 /** A fresh editor per role, so edits on one role never carry to another. */
@@ -99,6 +100,7 @@ export function App() {
             </NavLink>
           ))}
           {isAdmin && <NavLink to="/team">Team</NavLink>}
+          <NavLink to="/settings">Settings</NavLink>
         </div>
         <div className="user">
           <div className="user-name">{me.data.name}</div>
@@ -149,6 +151,7 @@ export function App() {
         <Route path="/brief/:id/search" element={<SearchPage />} />
         <Route path="/brief/:id/candidates" element={<CandidatesPage />} />
         <Route path="/candidates" element={<CandidateRoles />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="/team" element={isAdmin ? <Team me={me.data} /> : <Navigate to="/today" replace />} />
       </Routes>
     </div>

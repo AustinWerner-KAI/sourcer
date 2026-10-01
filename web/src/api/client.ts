@@ -25,6 +25,9 @@ import type { HandoverResult } from "./types/HandoverResult";
 import type { RetuneView } from "./types/RetuneView";
 import type { CvView } from "./types/CvView";
 import type { FeedbackRequest } from "./types/FeedbackRequest";
+import type { OutreachView } from "./types/OutreachView";
+import type { OutreachStepEdit } from "./types/OutreachStepEdit";
+import type { OutreachSettings } from "./types/OutreachSettings";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -142,6 +145,20 @@ export const api = {
     if (res.status === 401) throw new SignedOut();
     if (!res.ok) throw await failure(res);
   },
+
+  outreach: (candidacy: string) => get<OutreachView>(`/api/candidates/${candidacy}/outreach`),
+  /** Draft the three emails. `fresh` replaces an existing draft or a stopped sequence. */
+  draftOutreach: (candidacy: string, fresh = false) =>
+    send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach${fresh ? "?fresh=true" : ""}`, {}),
+  saveOutreach: (candidacy: string, version: number, steps: OutreachStepEdit[]) =>
+    send<OutreachView>("PUT", `/api/candidates/${candidacy}/outreach`, { version, steps }),
+  /** One approval for all three emails. Nothing is sent until Outlook is connected. */
+  approveOutreach: (candidacy: string, version: number) =>
+    send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach/approve`, { version }),
+  stopOutreach: (candidacy: string, version: number) =>
+    send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach/stop`, { version }),
+  outreachSettings: () => get<OutreachSettings>("/api/me/outreach"),
+  saveOutreachSettings: (s: OutreachSettings) => send<OutreachSettings>("PUT", "/api/me/outreach", s),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {

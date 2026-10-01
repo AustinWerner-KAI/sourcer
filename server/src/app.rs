@@ -18,7 +18,7 @@ use crate::{
     auth::AuthConfig,
     candidates, crm, cv,
     domain::Health,
-    people,
+    outreach, people,
     ratelimit::{self, RateLimiter},
     recruitly::Recruitly,
     retune, roles, searching,
@@ -146,6 +146,19 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/candidates/:id/cv/assess", post(cv::assess_more))
         .route("/api/candidates/:id/cv/recruitly", post(cv::to_recruitly))
         .route("/api/cv-assessments/:id/feedback", put(cv::feedback))
+        .route(
+            "/api/candidates/:id/outreach",
+            get(outreach::get).post(outreach::start).put(outreach::save),
+        )
+        .route(
+            "/api/candidates/:id/outreach/approve",
+            post(outreach::approve),
+        )
+        .route("/api/candidates/:id/outreach/stop", post(outreach::stop))
+        .route(
+            "/api/me/outreach",
+            get(outreach::get_settings).put(outreach::put_settings),
+        )
         .with_state(state);
     let api = api.layer(middleware::from_fn(require_change_header));
     let app = match web_dir {
