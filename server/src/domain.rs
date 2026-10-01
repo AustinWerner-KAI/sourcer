@@ -37,6 +37,10 @@ impl CandidacyState {
                 | (Shortlisted, Rejected)
                 | (Shortlisted, Drafted)
                 | (Drafted, Approved)
+                | (Drafted, Shortlisted) // outreach stopped before it was approved
+                | (Approved, Shortlisted) // outreach stopped before anything was sent
+                | (Drafted, Rejected)
+                | (Approved, Rejected)
                 | (Approved, Contacted)
                 | (Rejected, Ranked) // resourcer changes their mind
                 | (Contacted, Replied)
