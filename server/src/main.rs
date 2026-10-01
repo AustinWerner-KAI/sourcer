@@ -27,10 +27,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Claude, shared by brief drafting and the background ranker.
-    let ai = Arc::new(ai::Claude::new(
-        config.anthropic_api_key.clone(),
-        config.anthropic_model.clone(),
-    ));
+    let ai = Arc::new(
+        ai::Claude::new(
+            config.anthropic_api_key.clone(),
+            config.anthropic_model.clone(),
+        )
+        .with_draft_model(config.anthropic_draft_model.clone()),
+    );
     if !ai.configured() {
         tracing::warn!("Brief drafting and ranking are off; set ANTHROPIC_API_KEY to turn them on");
     }
