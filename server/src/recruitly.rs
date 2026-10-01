@@ -343,6 +343,10 @@ pub struct Job {
     pub description: Option<String>,
     pub location: Option<String>,
     pub pay: Option<String>,
+    pub experience: Option<String>,
+    pub employment: Option<String>,
+    pub remote: bool,
+    pub skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,30 +481,58 @@ fn location(v: &Value) -> Option<String> {
 fn job(v: &Value) -> Option<Job> {
     let hit = job_hit(v)?;
     let pay = {
-        let min = text(v, "minPay").filter(|p| p != "0");
-        let max = text(v, "maxPay").filter(|p| p != "0");
+        let min = money(v, "minPay");
+        let max = money(v, "maxPay");
         let range = match (min, max) {
             (Some(a), Some(b)) if a != b => Some(format!("{a} to {b}")),
             (Some(a), _) | (None, Some(a)) => Some(a),
             _ => None,
         };
         range.map(|r| {
-            [Some(r), text(v, "payCurrency"), text(v, "payTenure")]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" ")
+            [
+                Some(r),
+                text(v, "payCurrency"),
+                text(v, "payTenure").map(|t| t.replace('_', " ").to_lowercase()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
         })
     };
+    let skills: Vec<String> = v
+        .get("skills")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| match s {
+                    Value::String(s) => Some(s.trim().to_string()),
+                    Value::Object(_) => text(s, "name"),
+                    _ => None,
+                })
+                .filter(|s| !s.is_empty())
+                .take(30)
+                .collect()
+        })
+        .unwrap_or_default();
     Some(Job {
         id: hit.id,
         title: hit.title,
         reference: hit.reference,
         company_id: text(v, "companyId").filter(|i| valid_id(i)),
         company_name: hit.company,
-        description: text(v, "description"),
+        // The full description when Recruitly holds one, else the short one.
+        // The internal description is left out: it is for the team, not a spec.
+        description: text(v, "description").or_else(|| text(v, "shortDescription")),
         location: hit.location,
         pay,
+        experience: text(v, "experienceLevelName"),
+        employment: text(v, "employmentTypeName"),
+        remote: v
+            .get("remoteWorking")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        skills,
     })
 }
 
@@ -524,6 +556,27 @@ fn candidate_hit(v: &Value) -> Option<CandidateHit> {
         placed: v.get("placed").and_then(Value::as_bool).unwrap_or(false),
         do_not_contact: v.get("doNotContact").and_then(Value::as_bool),
     })
+}
+
+/// A pay figure as "180,000": whole units with thousands separated. Zero is no figure.
+fn money(v: &Value, key: &str) -> Option<String> {
+    let n = match v.get(key)? {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(s) => s.trim().replace(',', "").parse::<f64>().ok()?,
+        _ => return None,
+    };
+    if !n.is_finite() || n <= 0.0 {
+        return None;
+    }
+    let digits = format!("{:.0}", n.round());
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    Some(out)
 }
 
 /// A job description as plain text. Recruitly may hold HTML.
@@ -646,7 +699,21 @@ mod tests {
         let j = job(&v).unwrap();
         assert_eq!(j.company_id.as_deref(), Some("c9"));
         assert_eq!(j.location.as_deref(), Some("Dubai, United Arab Emirates"));
-        assert_eq!(j.pay.as_deref(), Some("30000 to 40000 AED Monthly"));
+        assert_eq!(j.pay.as_deref(), Some("30,000 to 40,000 AED monthly"));
+        // As the live API sends it: no full description, decimals, skills.
+        let live = json!({"id": "j2", "title": "Senior Cloud Security Engineer", "reference": "JB-1",
+            "shortDescription": "Secure the cloud estate.", "internalDescription": "fee 25%",
+            "minPay": 180000.0, "maxPay": 200000.0, "payCurrency": "USD", "payTenure": "Per Year",
+            "experienceLevelName": "Senior Level", "employmentTypeName": "Permanent",
+            "remoteWorking": true, "skills": ["AWS", "IAM", ""]});
+        let j = job(&live).unwrap();
+        assert_eq!(j.description.as_deref(), Some("Secure the cloud estate."));
+        assert_eq!(j.pay.as_deref(), Some("180,000 to 200,000 USD per year"));
+        assert_eq!(j.skills, ["AWS", "IAM"]);
+        assert!(j.remote);
+        assert_eq!(money(&json!({"p": 999}), "p").as_deref(), Some("999"));
+        assert_eq!(money(&json!({"p": 1000}), "p").as_deref(), Some("1,000"));
+        assert_eq!(money(&json!({"p": 0}), "p"), None);
         let bad = json!({"id": "../x", "title": "Y"});
         assert!(job(&bad).is_none(), "odd ids are refused");
     }
