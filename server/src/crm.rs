@@ -40,7 +40,7 @@ use crate::{
 /// How long a Recruitly answer counts for the connection light.
 const SEEN_FOR: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// Work emails searched for per person, at most.
+/// Emails searched for per person (work first, then personal), at most.
 const MAX_EMAILS_SEARCHED: usize = 2;
 
 fn refuse(code: StatusCode, msg: impl Into<String>) -> Response {
@@ -678,8 +678,9 @@ pub async fn check_person(
             .fetch_one(pool)
             .await?;
     let emails: Vec<String> = sqlx::query_scalar(
-        "SELECT lower(value) FROM contact WHERE person_id = $1 AND org_id = $2 AND kind = 'work_email'
-         ORDER BY value",
+        "SELECT lower(value) FROM contact
+         WHERE person_id = $1 AND org_id = $2 AND kind IN ('work_email', 'personal_email')
+         ORDER BY kind, value",
     )
     .bind(person_id)
     .bind(org_id)
@@ -1074,7 +1075,11 @@ pub async fn handover(
                 let new = NewCandidate {
                     first_name: first,
                     last_name: last,
-                    email: contact("work_email").await?,
+                    // A work email if there is one, else a personal one.
+                    email: match contact("work_email").await? {
+                        Some(work) => Some(work),
+                        None => contact("personal_email").await?,
+                    },
                     mobile: contact("phone").await?,
                     linked_in: linkedin.map(|l| format!("https://www.{l}")),
                     job_title: title,

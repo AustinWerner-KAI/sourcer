@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
 import type { CheckVerdict } from "../api/types/CheckVerdict";
+import type { ContactLine } from "../api/types/ContactLine";
 import type { RankCheck } from "../api/types/RankCheck";
 import type { CandidateRow } from "../api/types/CandidateRow";
 import type { CandidateTab } from "../api/types/CandidateTab";
@@ -189,7 +190,6 @@ function Person({
   });
   const ranked = p.state !== "found" && p.state !== "known_checked";
   const where = [p.title, p.employer].filter(Boolean).join(" · ");
-  const reach = [p.has_work_email && "Work email", p.has_phone && "Phone"].filter(Boolean).join(" · ");
 
   return (
     <article className={`cand${p.do_not_contact ? " blocked" : ""}`} aria-label={p.name}>
@@ -239,7 +239,7 @@ function Person({
             ))}
           </div>
         )}
-        <div className="reach">{reach || "No contact details yet"}</div>
+        <Reach contacts={p.contacts} blocked={p.do_not_contact} />
         {recruitly && tab === "shortlisted" && <RecruitlyLine p={p} roleId={roleId} job={job} />}
       </div>
       <div className="acts">
@@ -429,6 +429,41 @@ const VERDICT: Record<CheckVerdict, { mark: string; label: string }> = {
   partly: { mark: "~", label: "Partly" },
   not_shown: { mark: "?", label: "Not shown" },
 };
+
+const CONTACT_LABEL: Record<ContactLine["kind"], string> = {
+  work_email: "Work",
+  personal_email: "Personal",
+  phone: "Phone",
+};
+
+/** How to reach them: each address opens your mail app or phone, with a copy button. */
+function Reach({ contacts, blocked }: { contacts: ContactLine[]; blocked: boolean }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  if (blocked) return <div className="reach">Contact details hidden: do not contact.</div>;
+  if (contacts.length === 0) return <div className="reach">No contact details yet.</div>;
+  const copy = (value: string) => {
+    navigator.clipboard?.writeText(value).then(
+      () => {
+        setCopied(value);
+        window.setTimeout(() => setCopied((c) => (c === value ? null : c)), 1500);
+      },
+      () => setCopied(null),
+    );
+  };
+  return (
+    <ul className="reach contacts" aria-label="Contact details">
+      {contacts.map((c) => (
+        <li key={`${c.kind}:${c.value}`} className="ct">
+          <span className="k">{CONTACT_LABEL[c.kind]}</span>
+          <a href={`${c.kind === "phone" ? "tel" : "mailto"}:${c.value}`}>{c.value}</a>
+          <button className="cp" onClick={() => copy(c.value)} aria-label={`Copy ${c.value}`}>
+            {copied === c.value ? "Copied" : "Copy"}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /** Claude's verdict on each line of the brief, in the brief's order. */
 function Checks({ checks }: { checks: RankCheck[] }) {

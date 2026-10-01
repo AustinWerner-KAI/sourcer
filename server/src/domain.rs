@@ -484,6 +484,9 @@ pub struct CandidateRow {
     pub employer_unknown: bool,
     pub has_work_email: bool,
     pub has_phone: bool,
+    /// Work email, personal emails and phones, work first. Empty for anyone
+    /// who must not be contacted.
+    pub contacts: Vec<ContactLine>,
     pub reject_reason: Option<ReasonCode>,
     /// What Recruitly knows about them, in words. `None` when not checked or not there.
     pub recruitly_note: Option<String>,
@@ -497,6 +500,34 @@ pub struct CandidateRow {
     pub sent_to_recruitly: Option<String>,
     /// Sent into the linked job's pipeline, not only as a candidate.
     pub in_recruitly_pipeline: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum ContactKind {
+    WorkEmail,
+    PersonalEmail,
+    Phone,
+}
+
+impl ContactKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "work_email" => Some(Self::WorkEmail),
+            "personal_email" => Some(Self::PersonalEmail),
+            "phone" => Some(Self::Phone),
+            _ => None,
+        }
+    }
+}
+
+/// One way to reach a person, as the card shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct ContactLine {
+    pub kind: ContactKind,
+    pub value: String,
 }
 
 /// How well the work evidence shows one line of the brief.

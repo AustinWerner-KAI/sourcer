@@ -238,6 +238,12 @@ dl.q dd b { color: var(--text); font-weight: 500; }
 .flag.known { background: rgba(255, 155, 115, 0.12); color: var(--warn); }
 .flag.emp { color: var(--warn); border: 1px solid rgba(255, 155, 115, 0.3); }
 .reach { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+ul.reach.contacts { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.ct { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ct .k { color: var(--muted); }
+.ct a { color: var(--text-2); overflow-wrap: anywhere; }
+.ct a:hover { color: var(--gold); }
+.ct .cp { padding: 6px 6px; margin: -6px -6px; border: 0; background: none; color: var(--gold); font-size: 12px; }
 .acts { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 150px; }
 .acts .btn-ghost { text-align: center; }
 .acts .li { margin: 0; text-align: center; }
