@@ -541,6 +541,10 @@ async fn handover_creates_once_and_asks_before_sending_a_colleagues_person() {
     f.candidates.lock().unwrap().push(json!({"id": "rc-teo", "firstName": "Person", "lastName": "1",
         "linkedIn": li1, "ownerName": "Teo", "ownerId": "u-teo", "statusName": "Interviewing", "doNotContact": false}));
     let row = json_body(send(&app, decide_req(&me, &people[1], "shortlist", None)).await).await;
+    // The screen compares the owner with the signed-in user's own Recruitly user.
+    assert_eq!(row["recruitly_owner_id"], "u-teo");
+    let who = json_body(send(&app, get_req("/api/me", Some(&me))).await).await;
+    assert_eq!(who["recruitly_user_id"], "u-me", "learnt once and kept");
     let v = json_body(send(&app, hand(&row, &[])).await).await;
     assert_eq!(
         v["confirm"],
@@ -615,6 +619,14 @@ async fn handover_creates_once_and_asks_before_sending_a_colleagues_person() {
     .await
     .unwrap();
     assert_eq!(audited, 3);
+    assert_eq!(
+        f.calls()
+            .iter()
+            .filter(|c| c.starts_with("GET /api/nova/users/list"))
+            .count(),
+        1,
+        "the user list is read once, then kept"
+    );
 
     // Another organisation cannot send these people.
     let (_, outsider) = signed_in(&pool, testutil::org(&pool).await, "admin").await;
