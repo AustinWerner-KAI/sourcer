@@ -23,6 +23,8 @@ import type { JobPreview } from "./types/JobPreview";
 import type { ImportRole } from "./types/ImportRole";
 import type { HandoverResult } from "./types/HandoverResult";
 import type { RetuneView } from "./types/RetuneView";
+import type { CvView } from "./types/CvView";
+import type { FeedbackRequest } from "./types/FeedbackRequest";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -112,6 +114,34 @@ export const api = {
   /** `confirmed` holds the keys of the questions the resourcer has said yes to. */
   handover: (candidacy: string, confirmed: string[]) =>
     send<HandoverResult>("POST", `/api/candidates/${candidacy}/handover`, { confirmed }),
+
+  cv: (candidacy: string) => get<CvView>(`/api/candidates/${candidacy}/cv`),
+  /** The file is sent as it is; the server removes the name and contact details before anything is kept. */
+  uploadCv: async (candidacy: string, file: File, otherRoles: string[]): Promise<CvView> => {
+    const q = new URLSearchParams({ name: file.name, roles: otherRoles.join(",") });
+    const res = await fetch(`/api/candidates/${candidacy}/cv?${q}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/octet-stream", [CHANGE_HEADER]: "1" },
+      body: file,
+    });
+    if (res.status === 401) throw new SignedOut();
+    if (!res.ok) throw await failure(res);
+    return (await res.json()) as CvView;
+  },
+  assessCv: (candidacy: string, roleIds: string[]) =>
+    send<CvView>("POST", `/api/candidates/${candidacy}/cv/assess`, { role_ids: roleIds }),
+  cvToRecruitly: (candidacy: string) => send<CvView>("POST", `/api/candidates/${candidacy}/cv/recruitly`, {}),
+  cvFeedback: async (assessment: string, f: FeedbackRequest): Promise<void> => {
+    const res = await fetch(`/api/cv-assessments/${assessment}/feedback`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", [CHANGE_HEADER]: "1" },
+      body: JSON.stringify(f),
+    });
+    if (res.status === 401) throw new SignedOut();
+    if (!res.ok) throw await failure(res);
+  },
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {
