@@ -7,4 +7,8 @@ export type Me = { id: string, name: string, email: string,
 /**
  * "admin" or "resourcer".
  */
-role: string, };
+role: string, 
+/**
+ * Their own user in Recruitly, once known, to tell their records from a colleague's.
+ */
+recruitly_user_id: string | null, };

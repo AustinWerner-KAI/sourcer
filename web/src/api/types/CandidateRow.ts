@@ -62,7 +62,11 @@ stale_rank: boolean, reject_reason: ReasonCode | null,
 /**
  * What Recruitly knows about them, in words. `None` when not checked or not there.
  */
-recruitly_note: string | null, recruitly_checked: boolean, 
+recruitly_note: string | null, 
+/**
+ * The Recruitly user who owns their record, to compare with `Me`.
+ */
+recruitly_owner_id: string | null, recruitly_checked: boolean, 
 /**
  * The last check could not reach Recruitly.
  */
