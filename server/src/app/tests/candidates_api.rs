@@ -368,3 +368,84 @@ async fn without_an_ai_key_people_wait_unranked_and_the_screen_says_why() {
     assert_eq!(res.status(), StatusCode::CONFLICT);
     assert!(bodies.lock().unwrap().is_empty(), "nothing sent to Claude");
 }
+
+#[tokio::test]
+async fn a_new_brief_re_ranks_everyone_in_play_and_keeps_their_place() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let (app, uri, ranker, bodies) = role_with_people(&pool, org, &me, 3).await;
+    run_jobs(&pool, org, &ranker).await;
+    let v = candidates_of(&app, &uri, &me, "review").await;
+    let res = send(&app, decide_req(&me, &v["people"][0], "shortlist", None)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = send(
+        &app,
+        decide_req(&me, &v["people"][2], "reject", Some("FIT")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(v["stale"], 0);
+
+    // The brief changes: version 2 is confirmed.
+    let mut l = lines(Some("required"));
+    l["locations"] = json!(["New York", "Dubai"]);
+    l["must_haves"] = json!(["Cloud security", "IAM", "Terraform"]);
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/brief/confirm"),
+            &me,
+            json!({"lines": l, "based_on": 1}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    // The first ranking was a while ago; a recent one would hold the re-rank back.
+    sqlx::query("UPDATE job SET created_at = now() - interval '1 hour' WHERE org_id = $1")
+        .bind(org)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let v = candidates_of(&app, &uri, &me, "review").await;
+    assert_eq!(
+        (v["stale"].as_i64(), v["ranking"].as_bool()),
+        (Some(2), Some(true)),
+        "the shortlisted and the one to review; not the rejected"
+    );
+    assert_eq!(v["people"][0]["stale_rank"], true);
+    candidates_of(&app, &uri, &me, "review").await;
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job WHERE org_id = $1 AND kind = 'candidates.rank' AND status = 'queued'",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1, "one re-rank, however often the list is opened");
+
+    let sent_before = bodies.lock().unwrap().len();
+    run_jobs(&pool, org, &ranker).await;
+    let sent = bodies.lock().unwrap()[sent_before].to_string();
+    assert!(sent.contains("Terraform"), "ranked against the new brief");
+    let v = candidates_of(&app, &uri, &me, "review").await;
+    assert_eq!(
+        (
+            v["stale"].as_i64(),
+            v["to_review"].as_i64(),
+            v["shortlisted"].as_i64(),
+            v["rejected"].as_i64()
+        ),
+        (Some(0), Some(1), Some(1), Some(1)),
+        "everyone keeps their place"
+    );
+    assert_eq!(v["people"][0]["stale_rank"], false);
+    let s = candidates_of(&app, &uri, &me, "shortlisted").await;
+    assert_eq!(s["people"][0]["state"], "shortlisted");
+    assert_eq!(s["people"][0]["stale_rank"], false);
+    let checks = s["people"][0]["checks"].as_array().unwrap();
+    assert!(checks.iter().any(|c| c["item"] == "Terraform"));
+}

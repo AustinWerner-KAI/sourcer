@@ -440,6 +440,9 @@ pub struct CandidatesView {
     /// Found but not ranked yet.
     #[ts(type = "number")]
     pub unranked: i64,
+    /// Ranked or shortlisted against an older brief; re-ranked automatically.
+    #[ts(type = "number")]
+    pub stale: i64,
     /// A ranking is queued or running.
     pub ranking: bool,
     /// Why ranking cannot run now, in words for people.
@@ -489,6 +492,8 @@ pub struct CandidateRow {
     pub contacts: Vec<ContactLine>,
     /// The latest CV assessment for this role, out of 10.
     pub cv_score: Option<i32>,
+    /// The score is against an older brief; a re-rank is due.
+    pub stale_rank: bool,
     pub reject_reason: Option<ReasonCode>,
     /// What Recruitly knows about them, in words. `None` when not checked or not there.
     pub recruitly_note: Option<String>,
