@@ -44,6 +44,9 @@ const BATCH: i64 = 20;
 /// Batches per job; the rest are queued as a new job. Five slow batches
 /// (150 s each) stay inside the worker's 15-minute stale limit.
 const MAX_BATCHES: usize = 5;
+/// Shortlisted and every step after it: the Shortlisted tab lists them all.
+const IN_PLAY: &str =
+    "'shortlisted', 'drafted', 'approved', 'contacted', 'replied', 'no_reply', 'handed_to_ats'";
 /// Most people shown in one list.
 pub const MAX_LISTED: i64 = 200;
 /// Most past jobs sent per person.
@@ -148,7 +151,7 @@ impl RankHandler {
                  FROM candidacy c JOIN person p ON p.id = c.person_id
                  WHERE c.role_id = $1 AND c.org_id = $2
                    AND (c.state IN ('found', 'known_checked')
-                        OR (c.state IN ('ranked', 'shortlisted')
+                        OR (c.state IN ('ranked', 'shortlisted', 'drafted', 'approved')
                             AND (c.evidence->>'brief_version')::int IS DISTINCT FROM $5))
                    AND NOT (c.id = ANY($3))
                  ORDER BY c.created_at, c.id
@@ -226,7 +229,7 @@ impl RankHandler {
                                          THEN 'ranked'::candidacy_state ELSE state END,
                             tier = $2, rank = $3, evidence = $4,
                             ranked_at = now(), version = version + 1
-                     WHERE id = $1 AND state IN ('found', 'known_checked', 'ranked', 'shortlisted')",
+                     WHERE id = $1 AND state IN ('found', 'known_checked', 'ranked', 'shortlisted', 'drafted', 'approved')",
                 )
                 .bind(candidacy)
                 .bind(r.tier)
@@ -324,7 +327,7 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
        (SELECT a.score FROM cv_assessment a JOIN cv v ON v.id = a.cv_id
         WHERE v.person_id = p.id AND a.role_id = c.role_id AND a.org_id = c.org_id
         ORDER BY v.created_at DESC LIMIT 1) AS cv_score,
-       (c.state IN ('ranked', 'shortlisted') AND (c.evidence->>'brief_version')::int IS DISTINCT FROM
+       (c.state IN ('ranked', 'shortlisted', 'drafted', 'approved') AND (c.evidence->>'brief_version')::int IS DISTINCT FROM
           (SELECT max(b.version) FROM brief b WHERE b.role_id = c.role_id AND b.confirmed_at IS NOT NULL)
        ) AS stale_rank,
        (p.opted_out OR p.recruitly_dnc OR EXISTS (
@@ -459,10 +462,7 @@ async fn rows_for_role(
             "'found', 'known_checked', 'ranked'",
             "c.rank DESC NULLS LAST, c.created_at, c.id",
         ),
-        CandidateTab::Shortlisted => (
-            "'shortlisted'",
-            "c.rank DESC NULLS LAST, c.decided_at DESC, c.id",
-        ),
+        CandidateTab::Shortlisted => (IN_PLAY, "c.rank DESC NULLS LAST, c.decided_at DESC, c.id"),
         CandidateTab::Rejected => ("'rejected'", "c.decided_at DESC NULLS LAST, c.id"),
     };
     let sql = ROW_SELECT
@@ -509,10 +509,10 @@ async fn view(
     let (to_review, shortlisted, rejected, unranked, stale): (i64, i64, i64, i64, i64) =
         sqlx::query_as(
             "SELECT count(*) FILTER (WHERE state IN ('found', 'known_checked', 'ranked')),
-                    count(*) FILTER (WHERE state = 'shortlisted'),
+                    count(*) FILTER (WHERE state IN ('shortlisted', 'drafted', 'approved', 'contacted', 'replied', 'no_reply', 'handed_to_ats')),
                     count(*) FILTER (WHERE state = 'rejected'),
                     count(*) FILTER (WHERE state IN ('found', 'known_checked')),
-                    count(*) FILTER (WHERE state IN ('ranked', 'shortlisted')
+                    count(*) FILTER (WHERE state IN ('ranked', 'shortlisted', 'drafted', 'approved')
                                        AND (evidence->>'brief_version')::int IS DISTINCT FROM $3)
              FROM candidacy WHERE role_id = $1 AND org_id = $2",
         )
@@ -753,6 +753,17 @@ pub async fn decide(
         .rows_affected();
         if changed == 0 {
             return anyhow::Ok(false);
+        }
+        if to == CandidacyState::Rejected {
+            // Nothing more goes to someone rejected.
+            sqlx::query(
+                "UPDATE outreach SET status = 'stopped', stop_reason = 'Rejected',
+                        version = version + 1, updated_at = now()
+                 WHERE candidacy_id = $1 AND status IN ('draft', 'approved', 'active')",
+            )
+            .bind(candidacy)
+            .execute(&mut *tx)
+            .await?;
         }
         let why = reason
             .and_then(|r| serde_json::to_value(r).ok())
