@@ -22,6 +22,7 @@ import type { RecruitlyJob } from "./types/RecruitlyJob";
 import type { JobPreview } from "./types/JobPreview";
 import type { ImportRole } from "./types/ImportRole";
 import type { HandoverResult } from "./types/HandoverResult";
+import type { RetuneView } from "./types/RetuneView";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -49,7 +50,7 @@ async function send<T>(method: string, path: string, body: unknown): Promise<T> 
 /** The server's own message when it gave one, else a plain one. */
 async function failure(res: Response): Promise<Error> {
   // Our own refusals carry a message written for people.
-  const text = [400, 403, 404, 409, 429, 502, 503].includes(res.status) ? await res.text() : "";
+  const text = [400, 403, 404, 409, 422, 429, 502, 503].includes(res.status) ? await res.text() : "";
   if (!text && res.status === 403) return new Error("Only an active admin can do this.");
   return new Error(text || `Something went wrong (${res.status}). Please try again.`);
 }
@@ -92,6 +93,8 @@ export const api = {
   /** `key` is fresh per press, so a repeated request never pays twice. */
   countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
   pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
+  /** Round 2: Claude's reading of a thin count and a relaxed brief. Saves and searches nothing. */
+  retune: (id: string) => send<RetuneView>("POST", `/api/roles/${id}/search/retune`, {}),
 
   candidates: (id: string, tab: CandidateTab) => get<CandidatesView>(`/api/roles/${id}/candidates?tab=${tab}`),
   rankNow: (id: string) => send<CandidatesView>("POST", `/api/roles/${id}/candidates/rank`, {}),
