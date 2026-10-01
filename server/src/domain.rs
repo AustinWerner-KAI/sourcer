@@ -186,14 +186,27 @@ pub struct BriefDomain {
     pub weight: DomainWeight,
 }
 
-/// The brief check (SRS F3), as the resourcer edits it.
+/// The brief check (SRS F3), as the resourcer edits it. Lines added later
+/// default to empty, so a page loaded before an update can still save.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export, export_to = "../../web/src/api/types/")]
 pub struct BriefLines {
-    /// 1. Seniority titles to search, e.g. "Senior", "Lead", "Principal".
+    /// Claude's short read of the spec: what the search has to find and why.
+    /// Shown above the brief; never searched.
+    #[serde(default)]
+    pub analysis: String,
+    /// Line 1: job titles to search, the spec's own and close variants, e.g.
+    /// "Cloud Security Engineer". A person's title must contain one.
+    #[serde(default)]
+    pub titles: Vec<String>,
+    /// Seniority words, e.g. "Senior", "Lead", "Principal". The title must
+    /// also contain one.
     pub levels: Vec<String>,
     /// Titles never searched, e.g. "Director", "VP".
     pub excluded_titles: Vec<String>,
+    /// Fewest years of work experience, if the spec says. Narrows the search.
+    #[serde(default)]
+    pub min_years: Option<i32>,
     /// 2. Up to three, most important first.
     pub must_haves: Vec<String>,
     /// 3. Functional and soft skills. Used to rank and explain, never to filter.
@@ -202,10 +215,17 @@ pub struct BriefLines {
     pub domains: Vec<BriefDomain>,
     /// 5. Every tool the spec names.
     pub tools: Vec<BriefTool>,
-    /// 6. Cities, and whether remote counts.
+    /// Line 6: standards and regulations, e.g. "NIST CSF", "DORA". Rank
+    /// only, as few profiles list them.
+    #[serde(default)]
+    pub frameworks: Vec<String>,
+    /// Certifications the spec asks for, e.g. "CISSP". Rank only.
+    #[serde(default)]
+    pub certifications: Vec<String>,
+    /// 7. Cities, and whether remote counts.
     pub locations: Vec<String>,
     pub remote: bool,
-    /// 7. Kinds of employer to search, and companies to leave out.
+    /// 8. Kinds of employer to search, and companies to leave out.
     pub employer_types: Vec<String>,
     pub leave_out: Vec<String>,
 }
