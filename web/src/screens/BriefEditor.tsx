@@ -43,11 +43,24 @@ const empty: BriefLines = {
   leave_out: [],
 };
 
+/** People Data Labs takes at most 20 "contains" matches in one search (server plan.rs). */
+const MAX_TITLES = 10;
+const MAX_LEVELS = 6;
+const MAX_PLAIN_EXCLUSIONS = 4;
+/** Excluded words PDL tags as a level, so they need no "contains" match. */
+const TAGGED = ["manager", "director", "vp", "vice president", "svp", "evp", "chief", "cxo", "c-level", "c-suite", "owner", "partner"];
+
 /** The same checks the server makes before confirming. */
 export function problems(l: BriefLines): string[] {
   const out: string[] = [];
   if (l.titles.length === 0) out.push("Add at least one job title to search.");
+  if (l.titles.length > MAX_TITLES)
+    out.push(`Keep to ${MAX_TITLES} job titles; People Data Labs limits how many one search can hold.`);
   if (l.levels.length === 0) out.push("Choose at least one level.");
+  if (l.levels.length > MAX_LEVELS) out.push(`Keep to ${MAX_LEVELS} levels.`);
+  const plain = l.excluded_titles.filter((w) => !TAGGED.includes(w.trim().toLowerCase())).length;
+  if (plain > MAX_PLAIN_EXCLUSIONS)
+    out.push(`The "not" list can hold Manager, Director, VP and Chief plus ${MAX_PLAIN_EXCLUSIONS} other words.`);
   if (l.must_haves.length === 0) out.push("Add at least one must-have.");
   if (l.must_haves.length > 3) out.push("Keep to three must-haves.");
   if (l.domains.length === 0) out.push("Add at least one domain focus.");
