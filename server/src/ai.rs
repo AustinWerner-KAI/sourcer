@@ -121,7 +121,7 @@ engineer: \"Cloud Security Engineer\", \"Security Engineer\", \"DevSecOps Engine
 \"Infrastructure Security Engineer\", \"Security Architect\"). Never a title so broad it \
 matches unrelated work (e.g. \"Engineer\" alone).
 
-levels: the seniority words in titles that fit, e.g. [\"Senior\", \"Lead\", \"Principal\", \
+levels: at most six seniority words in titles that fit, e.g. [\"Senior\", \"Lead\", \"Principal\", \
 \"Staff\"] for a senior hands-on role. min_years: the fewest years of experience the spec \
 asks for, or null if it does not say.
 
@@ -221,6 +221,20 @@ impl Claude {
         let draft: Draft =
             serde_json::from_value(input).map_err(|e| AiError::Provider(e.to_string()))?;
         Ok(apply_defaults(draft))
+    }
+
+    /// Round 2: why a count found too few people, and relaxing moves to try.
+    pub async fn retune(
+        &self,
+        brief: &BriefLines,
+        counts: &[crate::domain::CountLocation],
+    ) -> Result<crate::retune::Reply, AiError> {
+        let key = self.api_key.as_deref().ok_or(AiError::NotConfigured)?;
+        let body = crate::retune::request(&self.draft_model, brief, counts);
+        let input = self
+            .call_tool(key, &body, "no round 2 in the reply", DRAFT_TIMEOUT_SECS)
+            .await?;
+        serde_json::from_value(input).map_err(|e| AiError::Provider(e.to_string()))
     }
 
     /// Send one request that forces a tool call, and return the tool's input.
@@ -589,7 +603,7 @@ fn apply_defaults(d: Draft) -> BriefLines {
     BriefLines {
         analysis: d.analysis.trim().chars().take(1_500).collect(),
         titles: clean(d.titles, 8),
-        levels: clean(d.levels, 8),
+        levels: clean(d.levels, crate::plan::MAX_LEVELS),
         min_years: d
             .min_years
             .and_then(|v| match v {

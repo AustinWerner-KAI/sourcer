@@ -21,7 +21,7 @@ use crate::{
     people,
     ratelimit::{self, RateLimiter},
     recruitly::Recruitly,
-    roles, searching,
+    retune, roles, searching,
     sources::pdl::PdlClient,
     team,
 };
@@ -120,6 +120,7 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/brief/confirm", post(roles::confirm_brief))
         .route("/api/roles/:id/search", get(searching::get_search))
         .route("/api/roles/:id/search/count", post(searching::count))
+        .route("/api/roles/:id/search/retune", post(retune::retune))
         .route("/api/roles/:id/search/pull", post(searching::pull))
         .route("/api/roles/:id/candidates", get(candidates::list))
         .route("/api/roles/:id/candidates/rank", post(candidates::rank_now))
