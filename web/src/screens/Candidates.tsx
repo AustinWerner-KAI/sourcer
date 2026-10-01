@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
@@ -288,13 +288,21 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
   // The question waiting for a yes, and the questions already answered yes.
   const [confirm, setConfirm] = useState<{ text: string; key: string } | null>(null);
   const [yes, setYes] = useState<string[]>([]);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["candidates", roleId] });
+  // Every Recruitly call spends from the daily allowance, so the count is read again too.
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["candidates", roleId] });
+    queryClient.invalidateQueries({ queryKey: ["recruitly-status"] });
+  };
   const check = useMutation({ mutationFn: () => api.recruitlyCheck(p.id), onSettled: refresh });
   const add = useMutation({
-    mutationFn: (confirmed: string[]) => api.handover(p.id, confirmed),
+    mutationFn: (confirmed: string[]) => {
+      check.reset();
+      return api.handover(p.id, confirmed);
+    },
     onSuccess: (r) => {
       setConfirm(r.confirm && r.confirm_key ? { text: r.confirm, key: r.confirm_key } : null);
-      if (r.candidate) refresh();
+      // A question can follow a fresh check, so the line is read again either way.
+      refresh();
     },
     onError: () => {
       // A failed try starts over: every question is asked again.
@@ -317,31 +325,46 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
     flag = (
       <span className="flag sent">
         Added to Recruitly {p.sent_to_recruitly}
-        {p.in_recruitly_pipeline ? ` · in ${jobRef(job)}` : ""}
+        {p.in_recruitly_pipeline && job ? ` · in ${jobRef(job)}` : ""}
       </span>
     );
   } else if (p.do_not_contact) {
-    flag = <span className="flag stop">Do not contact. Can't be added to Recruitly.</span>;
+    flag = <span className="flag stop">Can't be added to Recruitly</span>;
   } else if (p.recruitly_check_failed) {
-    flag = <span className="flag emp">Check failed: Recruitly didn't answer</span>;
+    flag = <span className="flag emp">Recruitly check failed</span>;
   } else if (!p.recruitly_checked) {
     flag = <span className="flag emp">Not checked in Recruitly</span>;
   } else if (p.recruitly_note) {
-    const clear = p.recruitly_note.startsWith("In Recruitly") && !p.recruitly_note.includes("owned by");
+    // Already in Recruitly with an owner, stage or history: look before adding.
+    const clear = p.recruitly_note === "In Recruitly";
     flag = <span className={`flag ${clear ? "rc" : "emp"}`}>{p.recruitly_note}</span>;
   } else {
     flag = <span className="flag rc">Not in Recruitly</span>;
   }
+  // Can be added: not yet sent and not on the do-not-contact list.
   const open = !p.sent_to_recruitly && !p.do_not_contact;
+  // A pending question goes away if the row changes under it.
+  useEffect(() => {
+    if (!open) {
+      setConfirm(null);
+      setYes([]);
+    }
+  }, [open]);
+  // The question takes focus so keyboard and screen reader users meet it.
+  const yesButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirm) yesButton.current?.focus();
+  }, [confirm]);
 
   return (
     <div className="rcline">
       <div className="rcflags">
         {flag}
-        {p.recruitly_checked_at && !p.recruitly_check_failed && open && (
+        {p.recruitly_checked_at && !p.recruitly_check_failed && !p.sent_to_recruitly && (
           <span className="rcwhen">Checked {ago(p.recruitly_checked_at)}</span>
         )}
-        {open && (
+        {/* Still offered when blocked: Recruitly may since have cleared its flag. */}
+        {!p.sent_to_recruitly && (
           <button type="button" className="link-button" onClick={() => check.mutate()} disabled={busy}>
             {check.isPending ? "Checking" : p.recruitly_checked ? "Check again" : "Check now"}
           </button>
@@ -352,10 +375,16 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
           {add.isPending ? "Adding" : `Add to ${target}`}
         </button>
       )}
-      {confirm && (
-        <div className="confirm" role="alertdialog" aria-label="Check before adding">
+      {open && confirm && (
+        <div className="confirm" role="group" aria-label="Check before adding">
           <p>{confirm.text}</p>
-          <button type="button" className="btn-ghost" onClick={() => agree(confirm.key)} disabled={busy}>
+          <button
+            ref={yesButton}
+            type="button"
+            className="btn-ghost"
+            onClick={() => agree(confirm.key)}
+            disabled={busy}
+          >
             {add.isPending ? "Adding" : "Add anyway"}
           </button>
           <button

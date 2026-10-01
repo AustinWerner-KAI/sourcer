@@ -31,7 +31,15 @@ export function ago(seconds: number, now = Date.now()): string {
  * Find a Recruitly job. Shows the newest jobs first; a search costs one call.
  * `onPick` gets the job id. Jobs already made into roles link to them instead.
  */
-export function JobSearch({ onPick, onCancel }: { onPick: (id: string) => void; onCancel?: () => void }) {
+export function JobSearch({
+  onPick,
+  onCancel,
+  busy = false,
+}: {
+  onPick: (id: string) => void;
+  onCancel?: () => void;
+  busy?: boolean;
+}) {
   const [words, setWords] = useState("");
   const [asked, setAsked] = useState("");
   const jobs = useQuery({
@@ -91,7 +99,7 @@ export function JobSearch({ onPick, onCancel }: { onPick: (id: string) => void; 
                   Open its role
                 </Link>
               ) : (
-                <button type="button" className="btn-ghost" onClick={() => onPick(j.id)}>
+                <button type="button" className="btn-ghost" onClick={() => onPick(j.id)} disabled={busy}>
                   Use this job
                 </button>
               )}
@@ -136,7 +144,9 @@ export function RecruitlyJobBar({ roleId, link }: { roleId: string; link: Recrui
           Unlink
         </button>
       )}
-      {picking && <JobSearch onPick={(id) => save.mutate(id)} onCancel={() => setPicking(false)} />}
+      {picking && (
+        <JobSearch onPick={(id) => save.mutate(id)} onCancel={() => setPicking(false)} busy={save.isPending} />
+      )}
       {save.error && (
         <p className="form-error" role="alert">
           {save.error.message}
@@ -149,7 +159,12 @@ export function RecruitlyJobBar({ roleId, link }: { roleId: string; link: Recrui
 /** Admins: is Recruitly connected, and how much of today's allowance is used. */
 export function RecruitlyPanel() {
   const status = useRecruitly();
-  const test = useMutation({ mutationFn: api.recruitlyTest });
+  const queryClient = useQueryClient();
+  // A test spends a call, so the count is read again afterwards.
+  const test = useMutation({
+    mutationFn: api.recruitlyTest,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["recruitly-status"] }),
+  });
   const s = status.data;
   if (!s) return null;
   const near = s.calls_today >= s.daily_cap * 0.8;

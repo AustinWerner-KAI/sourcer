@@ -130,7 +130,8 @@ export function NewRole() {
     create.mutate();
   };
 
-  const showForm = !useJob || (jobId !== null && job.data);
+  // A job that already has a role opens that role instead of making a second one.
+  const showForm = !recruitly.isLoading && (!useJob || (jobId !== null && job.data && !job.data.role_id));
 
   return (
     <main>
@@ -149,11 +150,10 @@ export function NewRole() {
             : "Paste the client's spec. Nothing is spent until you confirm the brief."}
         </p>
         {recruitly.data?.configured && (
-          <div className="tabs source" role="tablist" aria-label="Where the spec comes from">
+          <div className="tabs source" role="group" aria-label="Where the spec comes from">
             <button
               type="button"
-              role="tab"
-              aria-selected={fromRecruitly}
+              aria-pressed={fromRecruitly}
               className={fromRecruitly ? "on" : undefined}
               onClick={() => setFromRecruitly(true)}
             >
@@ -161,18 +161,21 @@ export function NewRole() {
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={!fromRecruitly}
+              aria-pressed={!fromRecruitly}
               className={!fromRecruitly ? "on" : undefined}
               onClick={() => {
+                if (!fromRecruitly) return;
+                // Keep what is in the form; it just stops being tied to the job.
                 setFromRecruitly(false);
-                changeJob();
+                setJobId(null);
+                setFilledFrom(null);
               }}
             >
               Paste a spec
             </button>
           </div>
         )}
+        {recruitly.isLoading && <p className="panel-note">Loading</p>}
         {useJob && jobId === null && <JobSearch onPick={setJobId} />}
         {useJob && jobId !== null && (
           <div className="picked">
