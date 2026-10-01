@@ -42,6 +42,25 @@ async fn people_are_ranked_after_a_pull_without_names_reaching_claude() {
     assert_eq!(top["state"], "ranked");
     assert_eq!(top["unknowns"], json!(["Python or Go"]));
     assert!(top["reason"].as_str().unwrap().contains("**IAM**"));
+    // A verdict for each line of the brief, recorded and read back.
+    let checks = top["checks"].as_array().unwrap();
+    assert_eq!(
+        checks
+            .iter()
+            .map(|c| c["item"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "Cloud security",
+            "IAM",
+            "Title: Security Engineer",
+            "Level: Senior, Lead",
+            "5+ years' experience",
+            "CyberArk",
+            "Privileged access"
+        ]
+    );
+    assert!(checks.iter().all(|c| c["verdict"] == "met"));
+    assert_eq!(v["people"][2]["checks"][0]["verdict"], "not_shown");
     let sent = bodies.lock().unwrap()[0].to_string();
     assert!(!sent.contains("Sample Person"), "names never reach Claude");
     assert!(sent.contains("Samplefirm"), "work evidence does");

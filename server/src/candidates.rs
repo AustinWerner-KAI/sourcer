@@ -41,8 +41,9 @@ use crate::{
 pub const RANK_JOB: &str = "candidates.rank";
 /// People sent to Claude in one request.
 const BATCH: i64 = 20;
-/// Batches per job; the rest are queued as a new job.
-const MAX_BATCHES: usize = 10;
+/// Batches per job; the rest are queued as a new job. Five slow batches
+/// (150 s each) stay inside the worker's 15-minute stale limit.
+const MAX_BATCHES: usize = 5;
 /// Most people shown in one list.
 pub const MAX_LISTED: i64 = 200;
 /// Most past jobs sent per person.
@@ -219,7 +220,10 @@ impl RankHandler {
                 .bind(candidacy)
                 .bind(r.tier)
                 .bind(r.score)
-                .bind(json!({"reason": r.reason, "unknowns": r.unknowns, "brief_version": version}))
+                .bind(
+                    json!({"reason": r.reason, "unknowns": r.unknowns, "checks": r.checks,
+                              "brief_version": version}),
+                )
                 .execute(&mut *tx)
                 .await?;
                 in_batch += 1;
@@ -382,6 +386,7 @@ impl From<Row> for CandidateRow {
                         .collect()
                 })
                 .unwrap_or_default(),
+            checks: serde_json::from_value(evidence["checks"].clone()).unwrap_or_default(),
             known,
             do_not_contact: r.dnc,
             employer_unknown: r.employer_unknown,

@@ -853,6 +853,24 @@ fn split_name(full: &str) -> (String, String) {
 /// Well past the worst case (a dozen calls at the 15-second timeout).
 const HOLD_MINUTES: i32 = 10;
 
+/// The checks in words for the Recruitly note, e.g. "Met: IAM, Okta. Not
+/// shown: Python."
+fn checks_note(checks: &[crate::domain::RankCheck]) -> String {
+    use crate::domain::CheckVerdict::*;
+    [(Met, "Met"), (Partly, "Partly"), (NotShown, "Not shown")]
+        .iter()
+        .filter_map(|(v, label)| {
+            let items: Vec<&str> = checks
+                .iter()
+                .filter(|c| c.verdict == *v)
+                .map(|c| c.item.as_str())
+                .collect();
+            (!items.is_empty()).then(|| format!("{label}: {}.", items.join(", ")))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Ask before going on. `key` names the situation, so a confirmation given
 /// for one situation never passes another.
 fn ask(key: impl Into<String>, text: impl Into<String>) -> Response {
@@ -1131,6 +1149,11 @@ pub async fn handover(
                 .as_array()
                 .map(|u| u.iter().filter_map(|x| x.as_str()).collect())
                 .unwrap_or_default();
+            let checks: Vec<crate::domain::RankCheck> =
+                serde_json::from_value(evidence["checks"].clone()).unwrap_or_default();
+            if !checks.is_empty() {
+                text.push_str(&format!(" {}", checks_note(&checks)));
+            }
             if !unknowns.is_empty() {
                 text.push_str(&format!(" To check: {}.", unknowns.join(", ")));
             }
@@ -1197,6 +1220,22 @@ pub async fn handover(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checks_read_as_words_in_the_note() {
+        use crate::domain::{CheckVerdict, RankCheck};
+        let c = |item: &str, verdict| RankCheck {
+            item: item.into(),
+            verdict,
+        };
+        let note = checks_note(&[
+            c("IAM", CheckVerdict::Met),
+            c("Python", CheckVerdict::NotShown),
+            c("Okta", CheckVerdict::Met),
+        ]);
+        assert_eq!(note, "Met: IAM, Okta. Not shown: Python.");
+        assert_eq!(checks_note(&[]), "");
+    }
 
     #[test]
     fn names_split_for_recruitly() {

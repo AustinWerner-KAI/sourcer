@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, SignedOut } from "../api/client";
+import type { CheckVerdict } from "../api/types/CheckVerdict";
+import type { RankCheck } from "../api/types/RankCheck";
 import type { CandidateRow } from "../api/types/CandidateRow";
 import type { CandidateTab } from "../api/types/CandidateTab";
 import type { DecisionAction } from "../api/types/DecisionAction";
@@ -191,8 +193,21 @@ function Person({
 
   return (
     <article className={`cand${p.do_not_contact ? " blocked" : ""}`} aria-label={p.name}>
-      <div className={`tier ${(p.tier ?? "none").toLowerCase()}`} aria-label={p.tier ? `Tier ${p.tier}` : "Not ranked"}>
-        {p.tier ?? "·"}
+      <div className="mark">
+        <div
+          className={`tier ${(p.tier ?? "none").toLowerCase()}`}
+          role="img"
+          aria-label={p.tier ? `Tier ${p.tier}` : "Not ranked"}
+        >
+          {p.tier ?? "·"}
+        </div>
+        {p.score !== null && (
+          <div className="score" title="Claude's fit score out of 100">
+            <span className="sr">Score </span>
+            {p.score}
+            <span className="sr"> out of 100</span>
+          </div>
+        )}
       </div>
       <div className="body">
         <div className="who">
@@ -213,6 +228,7 @@ function Person({
         ) : (
           <p className="why dim">Not ranked yet.</p>
         )}
+        {p.checks.length > 0 && <Checks checks={p.checks} />}
         {p.unknowns.length > 0 && (
           <div className="unk">
             <span className="lbl2">To check:</span>
@@ -404,6 +420,35 @@ function RecruitlyLine({ p, roleId, job }: { p: CandidateRow; roleId: string; jo
           {(add.error ?? check.error)?.message}
         </p>
       )}
+    </div>
+  );
+}
+
+const VERDICT: Record<CheckVerdict, { mark: string; label: string }> = {
+  met: { mark: "✓", label: "Met" },
+  partly: { mark: "~", label: "Partly" },
+  not_shown: { mark: "?", label: "Not shown" },
+};
+
+/** Claude's verdict on each line of the brief, in the brief's order. */
+function Checks({ checks }: { checks: RankCheck[] }) {
+  const met = checks.filter((c) => c.verdict === "met").length;
+  return (
+    <div className="checks">
+      <span className="lbl2">
+        {met} of {checks.length} met
+      </span>
+      <ul>
+        {checks.map((c) => (
+          <li key={c.item} className={`ck ${c.verdict}`}>
+            <span className="m" aria-hidden="true">
+              {VERDICT[c.verdict].mark}
+            </span>
+            <span className="sr">{VERDICT[c.verdict].label}: </span>
+            {c.item}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
