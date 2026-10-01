@@ -36,6 +36,11 @@ pub mod action {
     pub const CV_ASSESSED: &str = "cv.assess";
     pub const CV_FEEDBACK: &str = "cv.feedback";
     pub const CV_NOTED: &str = "cv.recruitly_note";
+    pub const OUTREACH_DRAFTED: &str = "outreach.draft";
+    pub const OUTREACH_EDITED: &str = "outreach.edit";
+    pub const OUTREACH_APPROVED: &str = "outreach.approve";
+    pub const OUTREACH_STOPPED: &str = "outreach.stop";
+    pub const OUTREACH_SETTINGS: &str = "outreach.settings";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.
