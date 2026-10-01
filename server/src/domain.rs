@@ -473,6 +473,9 @@ pub struct CandidateRow {
     pub reason: Option<String>,
     /// Things to check that the profile does not show.
     pub unknowns: Vec<String>,
+    /// Claude's verdict on each must-have, title, level, years, required tool
+    /// and Must domain, in the brief's order. Empty when not ranked.
+    pub checks: Vec<RankCheck>,
     /// Known to the team through another role or a past message.
     pub known: Option<String>,
     /// Opted out or asked to be erased: never contacted.
@@ -494,6 +497,25 @@ pub struct CandidateRow {
     pub sent_to_recruitly: Option<String>,
     /// Sent into the linked job's pipeline, not only as a candidate.
     pub in_recruitly_pipeline: bool,
+}
+
+/// How well the work evidence shows one line of the brief.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum CheckVerdict {
+    Met,
+    Partly,
+    /// The profile does not show it. Not the same as "does not have it".
+    NotShown,
+}
+
+/// One line of the brief and Claude's verdict on it for one person.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct RankCheck {
+    pub item: String,
+    pub verdict: CheckVerdict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
