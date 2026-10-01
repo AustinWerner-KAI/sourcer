@@ -873,6 +873,7 @@ pub async fn assess_more(
 
 /// Assess one stored CV against roles, and save the results. The CV's call is
 /// replaced with the newest one, which has seen these roles.
+#[allow(clippy::result_large_err)]
 async fn assess(
     state: &AppState,
     pool: &PgPool,
