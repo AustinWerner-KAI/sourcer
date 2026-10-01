@@ -53,7 +53,8 @@ The server listens on `127.0.0.1:8080` only. Expose it through the VPN or a reve
 
 - Back up now: `bash deploy/backup.sh`
 - Restore: `bash deploy/restore.sh ~/sourcer-backups/<file>.dump` (takes a backup of the current data first)
-- Copy the backups folder off the machine regularly (for example to OneDrive). A backup on the same disk does not survive the disk failing.
+- **Off the machine (Google Drive):** run `bash deploy/offsite-google-drive.sh` once, with Google Drive for desktop installed and signed in. Every backup then also goes, encrypted, to `My Drive/Sourcer backups`. The key is made in `~/.sourcer-backup-key`: save it in your password manager, because without it the Google Drive copies cannot be opened.
+- Restore from Google Drive: `bash deploy/restore.sh "<path to>.dump.enc"` (with the key back in `~/.sourcer-backup-key`).
 
 ## Rules for contributors
 
