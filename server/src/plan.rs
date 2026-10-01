@@ -118,22 +118,55 @@ fn mentions(text: &str) -> Vec<Value> {
     ]
 }
 
+/// PDL's metro for a US city, from its canonical list (US only). The metro
+/// takes in the boroughs and suburbs a city name alone misses, such as
+/// Brooklyn for New York.
+fn us_metro(city: &str) -> Option<&'static str> {
+    Some(match city {
+        "new york" | "new york city" | "nyc" => "new york, new york",
+        "san francisco" => "san francisco, california",
+        "los angeles" => "los angeles, california",
+        "chicago" => "chicago, illinois",
+        "boston" => "boston, massachusetts",
+        "washington" | "washington dc" | "washington d.c." => "washington, district of columbia",
+        "seattle" => "seattle, washington",
+        "austin" => "austin, texas",
+        "miami" => "miami, florida",
+        "dallas" => "dallas, texas",
+        "denver" => "denver, colorado",
+        "atlanta" => "atlanta, georgia",
+        _ => return None,
+    })
+}
+
 /// A place as the brief names it ("London", "London, UK", "Dubai") matched
-/// against how PDL stores it ("london, england, united kingdom").
+/// against how PDL stores it ("london, england, united kingdom"). PDL's
+/// location fields hold one exact value each.
+///
+/// A city that shares its name with a US state means the city: "New York"
+/// is the city and its metro, never the whole state. "New York State"
+/// means the state.
 fn place(raw: &str) -> Value {
-    let head = raw.split(',').next().unwrap_or(raw).trim();
-    any_of(
-        [
-            "location_locality",
-            "location_metro",
-            "location_region",
-            "location_country",
-            "location_name",
-        ]
-        .iter()
-        .map(|f| phrase(f, head))
-        .collect(),
-    )
+    let head = raw.split(',').next().unwrap_or(raw).trim().to_lowercase();
+    if let Some(state) = head.strip_suffix(" state") {
+        return any_of(vec![phrase("location_region", state.trim())]);
+    }
+    let metro = us_metro(&head);
+    let city = match head.as_str() {
+        "nyc" | "new york city" => "new york",
+        "washington dc" | "washington d.c." => "washington",
+        h => h,
+    };
+    let mut fields = vec![phrase("location_locality", city)];
+    if let Some(m) = metro {
+        fields.push(phrase("location_metro", m));
+    } else {
+        // Not a known US city: it may be a region (an emirate, a state) or a country.
+        fields.push(phrase("location_region", city));
+    }
+    fields.push(phrase("location_country", city));
+    fields.push(phrase("location_name", city));
+    any_of(fields)
 }
 
 /// The searches to run for a confirmed brief, one per location.
@@ -416,6 +449,40 @@ mod tests {
         assert!(q.contains("\"location_locality\":\"london\""));
         assert!(q.contains("\"location_country\":\"london\""));
         assert!(!q.contains("uk"));
+        assert!(q.contains("\"location_region\":\"london\""));
+    }
+
+    #[test]
+    fn new_york_means_the_city_and_its_metro_not_the_state() {
+        for raw in ["New York", "New York, NY", "NYC", "new york city"] {
+            let q = text(&place(raw));
+            assert!(
+                q.contains("\"location_locality\":\"new york\""),
+                "{raw}: {q}"
+            );
+            assert!(
+                q.contains("\"location_metro\":\"new york, new york\""),
+                "{raw}: {q}"
+            );
+            assert!(
+                !q.contains("location_region"),
+                "{raw}: the whole state: {q}"
+            );
+        }
+        let state = text(&place("New York State"));
+        assert_eq!(
+            state,
+            "{\"bool\":{\"should\":[{\"match_phrase\":{\"location_region\":\"new york\"}}]}}"
+        );
+        // Regions that are not also a city still match as regions.
+        assert!(text(&place("California")).contains("\"location_region\":\"california\""));
+        assert!(text(&place("Abu Dhabi")).contains("\"location_region\":\"abu dhabi\""));
+        let dc = text(&place("Washington DC"));
+        assert!(dc.contains("\"location_metro\":\"washington, district of columbia\""));
+        assert!(
+            !dc.contains("location_region"),
+            "not Washington State: {dc}"
+        );
     }
 
     #[test]
