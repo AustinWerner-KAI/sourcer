@@ -518,12 +518,26 @@ impl FromRequestParts<AppState> for CurrentUser {
 }
 
 /// GET /api/me: who is signed in.
-pub async fn me(user: CurrentUser) -> Json<Me> {
+pub async fn me(State(state): State<AppState>, user: CurrentUser) -> Json<Me> {
+    let recruitly_user_id = match &state.pool {
+        Some(pool) => sqlx::query_scalar::<_, Option<String>>(
+            "SELECT recruitly_user_id FROM app_user WHERE id = $1 AND org_id = $2",
+        )
+        .bind(user.id)
+        .bind(user.org_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten(),
+        None => None,
+    };
     Json(Me {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        recruitly_user_id,
     })
 }
 
