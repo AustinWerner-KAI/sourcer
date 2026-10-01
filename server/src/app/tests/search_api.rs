@@ -323,3 +323,147 @@ async fn paused_organisation_cannot_count() {
         "nothing spent"
     );
 }
+
+/// A stand-in for Claude's Round 2: makes the required tool nice to have,
+/// the Must domain Plus, and adds a title. Returns (url, request bodies).
+async fn fake_round_two() -> (String, Bodies) {
+    let bodies: Bodies = Arc::default();
+    let seen = bodies.clone();
+    let app = Router::new().route(
+        "/v1/messages",
+        post(move |Json(body): Json<Value>| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(body);
+                Json(
+                    json!({"content": [{"type": "tool_use", "id": "t", "name": "record_round_two",
+                    "input": {
+                        "diagnosis": "CyberArk as a required tool emptied the search.",
+                        "tools_to_nice": ["CyberArk"], "domains_to_plus": ["Privileged access"],
+                        "add_titles": ["IAM Engineer"], "add_levels": [], "min_years": 5,
+                        "add_employer_types": [], "add_locations": [], "allow_remote": false,
+                        "reasons": [{"line": "tools", "reason": "Few profiles name CyberArk."}]
+                    }}]}),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, bodies)
+}
+
+#[tokio::test]
+async fn round_two_proposes_a_relaxed_brief_and_searches_nothing() {
+    use std::sync::atomic::Ordering;
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let (pdl_url, pdl_calls) = fake_pdl(0).await;
+    let (claude_url, asked) = fake_round_two().await;
+    let mut state = AppState::new(Some(pool.clone()), None);
+    state.pdl = Arc::new(PdlClient::with_base_url(Some("k".into()), &pdl_url));
+    state.ai = Arc::new(Claude::with_base_url(Some("k".into()), &claude_url));
+    let app = router(state);
+    let uri = searchable_role(&app, &me).await;
+    let retune = || json_req("POST", &format!("{uri}/search/retune"), &me, json!({}));
+
+    // Nothing to read until there is a count.
+    let res = send(&app, retune()).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "Claude is not asked without a count"
+    );
+
+    let key = Uuid::new_v4().to_string();
+    send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/search/count"),
+            &me,
+            json!({"key": key}),
+        ),
+    )
+    .await;
+    assert_eq!(pdl_calls.load(Ordering::SeqCst), 2);
+
+    let res = send(&app, retune()).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let r = json_body(res).await;
+    assert_eq!(r["based_on"], 1);
+    assert_eq!(
+        r["diagnosis"],
+        "CyberArk as a required tool emptied the search."
+    );
+    assert_eq!(r["lines"]["tools"][0]["status"], "nice");
+    assert_eq!(r["lines"]["domains"][0]["weight"], "plus");
+    assert_eq!(
+        r["lines"]["titles"],
+        json!(["Security Engineer", "IAM Engineer"])
+    );
+    assert_eq!(r["lines"]["min_years"], 5, "same years is no change");
+    assert_eq!(r["changes"][0]["line"], "Required tools");
+    assert_eq!(r["changes"][0]["reason"], "Few profiles name CyberArk.");
+    let sent = asked.lock().unwrap()[0]["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        sent.contains("\"people\": 0") && sent.contains("CyberArk"),
+        "{sent}"
+    );
+
+    // Nothing was saved or searched.
+    assert_eq!(
+        pdl_calls.load(Ordering::SeqCst),
+        2,
+        "no search until agreed"
+    );
+    let role = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    assert_eq!(role["brief"]["version"], 1);
+    assert_eq!(role["brief"]["lines"]["tools"][0]["status"], "required");
+
+    // Agreeing is the usual confirm, then a count of the new version.
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/brief/confirm"),
+            &me,
+            json!({"lines": r["lines"], "based_on": r["based_on"]}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let key = Uuid::new_v4().to_string();
+    let s = json_body(
+        send(
+            &app,
+            json_req(
+                "POST",
+                &format!("{uri}/search/count"),
+                &me,
+                json!({"key": key}),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s["count"]["brief_version"], 2);
+    assert_eq!(s["count"]["stale"], false);
+
+    // Unconfirmed edits come first.
+    send(
+        &app,
+        json_req("PUT", &format!("{uri}/brief"), &me, lines(Some("required"))),
+    )
+    .await;
+    let res = send(&app, retune()).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(asked.lock().unwrap().len(), 1);
+}
