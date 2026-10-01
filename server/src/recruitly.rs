@@ -224,7 +224,9 @@ impl Session<'_> {
     }
 
     pub async fn users(&self) -> R<Vec<User>> {
-        let v = self.get("/api/nova/users", &[]).await?;
+        let v = self
+            .get("/api/nova/users/list", &[("page", "0"), ("size", "100")])
+            .await?;
         Ok(items(&v).iter().map(user).collect())
     }
 
