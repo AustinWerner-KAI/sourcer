@@ -17,10 +17,6 @@ pub struct SendCheck {
     /// Any inbound touch on any channel since the sequence started, including a
     /// reply the resourcer marked by hand on LinkedIn or WhatsApp.
     pub replied_any_channel: bool,
-    /// For email only: is the address a personal one?
-    pub is_personal_email: bool,
-    /// Has anyone on the team spoken to this person before?
-    pub previously_spoken: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -31,7 +27,6 @@ pub enum Blocked {
     SendingPaused,
     NotApproved,
     AlreadyReplied,
-    PersonalEmailWithoutRelationship,
 }
 
 pub fn may_send(c: SendCheck) -> Result<(), Blocked> {
@@ -53,9 +48,8 @@ pub fn may_send(c: SendCheck) -> Result<(), Blocked> {
     if c.replied_any_channel {
         return Err(Blocked::AlreadyReplied);
     }
-    if matches!(c.channel, Channel::Email) && c.is_personal_email && !c.previously_spoken {
-        return Err(Blocked::PersonalEmailWithoutRelationship);
-    }
+    // Personal emails may be used like work emails (Kai, 1 Oct 2026); every
+    // check above still applies to them.
     Ok(())
 }
 
@@ -82,8 +76,6 @@ mod tests {
             org_sending_paused: false,
             sequence_approved: true,
             replied_any_channel: false,
-            is_personal_email: false,
-            previously_spoken: false,
         }
     }
 
@@ -154,25 +146,6 @@ mod tests {
                 ..ok()
             }),
             Err(Blocked::NotApproved)
-        );
-    }
-
-    #[test]
-    fn personal_email_needs_prior_relationship() {
-        let personal = SendCheck {
-            is_personal_email: true,
-            ..ok()
-        };
-        assert_eq!(
-            may_send(personal),
-            Err(Blocked::PersonalEmailWithoutRelationship)
-        );
-        assert_eq!(
-            may_send(SendCheck {
-                previously_spoken: true,
-                ..personal
-            }),
-            Ok(())
         );
     }
 

@@ -23,10 +23,13 @@ pub struct PersonRecord {
     pub location: Option<String>,
     pub linkedin_url: Option<String>,
     pub experience: Vec<ExperienceRecord>,
-    /// Work email, when the plan unlocks it. Personal emails are never read
-    /// from a provider (SRS N9).
+    /// Work email, when the plan unlocks it.
     #[serde(default)]
     pub work_email: Option<String>,
+    /// Personal emails, when the plan unlocks them (Kai, 1 Oct 2026: kept and
+    /// usable for outreach; opt-outs and do-not-contact still apply).
+    #[serde(default)]
+    pub personal_emails: Vec<String>,
     /// Phone numbers, when the plan unlocks them.
     #[serde(default)]
     pub phones: Vec<String>,
