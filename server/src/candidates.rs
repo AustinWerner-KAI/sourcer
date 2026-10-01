@@ -304,6 +304,7 @@ struct Row {
     other_title: Option<String>,
     last_out: Option<chrono::DateTime<chrono::Utc>>,
     recruitly_note: Option<String>,
+    recruitly_owner_id: Option<String>,
     recruitly_checked_at: Option<chrono::DateTime<chrono::Utc>>,
     recruitly_check_failed: bool,
     sent_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -335,7 +336,7 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
                                 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone')))
        ) AS dnc,
        o.state::text AS other_state, o.title AS other_title, t.last_out,
-       p.recruitly_note, p.recruitly_checked_at,
+       p.recruitly_note, p.recruitly_owner_id, p.recruitly_checked_at,
        p.recruitly_check_failed, h.done_at AS sent_at,
        (h.done_at IS NOT NULL AND h.pipeline_id IS NOT NULL) AS in_pipeline
 FROM candidacy c
@@ -437,6 +438,7 @@ impl From<Row> for CandidateRow {
             stale_rank: r.stale_rank,
             reject_reason: r.reason,
             recruitly_note: r.recruitly_note,
+            recruitly_owner_id: r.recruitly_owner_id,
             recruitly_checked: r.recruitly_checked_at.is_some(),
             recruitly_check_failed: r.recruitly_check_failed,
             recruitly_checked_at: r.recruitly_checked_at.map(|t| t.timestamp()),
