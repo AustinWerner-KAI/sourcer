@@ -34,6 +34,10 @@ pub(crate) const MAX_SPEC_CHARS: usize = crate::ai::MAX_SPEC_CHARS;
 const SPEC_TOO_LONG: &str = "The job spec is too long. Keep it under 30,000 characters.";
 const MAX_ITEMS: usize = 20;
 const MAX_ITEM_CHARS: usize = 120;
+/// Most years of experience a brief can ask for.
+const MAX_YEARS: i32 = 40;
+/// Longest read of the spec kept with a brief.
+const MAX_ANALYSIS_CHARS: usize = 1_500;
 
 fn refuse(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, msg.into()).into_response()
@@ -56,6 +60,9 @@ pub(crate) fn clean_text(raw: &str, max: usize) -> Option<String> {
 /// What still stops this brief being confirmed. Empty means ready.
 pub fn problems(l: &BriefLines) -> Vec<String> {
     let mut out = Vec::new();
+    if l.titles.is_empty() {
+        out.push("Add at least one job title to search.".to_string());
+    }
     if l.levels.is_empty() {
         out.push("Choose at least one level.".to_string());
     }
@@ -102,7 +109,17 @@ fn tidy(mut l: BriefLines) -> Result<BriefLines, &'static str> {
         }
         Ok(out)
     }
+    l.titles = list(l.titles)?;
     l.levels = list(l.levels)?;
+    l.frameworks = list(l.frameworks)?;
+    l.certifications = list(l.certifications)?;
+    if l.min_years.is_some_and(|y| !(0..=MAX_YEARS).contains(&y)) {
+        return Err("Years of experience must be between 0 and 40.");
+    }
+    l.analysis = l.analysis.trim().to_string();
+    if l.analysis.chars().count() > MAX_ANALYSIS_CHARS {
+        return Err("Claude's read of the spec is too long.");
+    }
     l.excluded_titles = list(l.excluded_titles)?;
     l.must_haves = list(l.must_haves)?;
     l.capabilities = list(l.capabilities)?;
@@ -323,45 +340,70 @@ pub async fn create_role(
     }
 }
 
-type BriefRow = (
-    Uuid,
-    i32,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<BriefDomain>>,
-    SqlJson<Vec<BriefTool>>,
-    SqlJson<Vec<String>>,
-    bool,
-    SqlJson<Vec<String>>,
-    SqlJson<Vec<String>>,
-    bool,
-    bool,
-);
+/// One brief row as stored. Shared with the search screen.
+#[derive(sqlx::FromRow)]
+pub(crate) struct BriefRow {
+    id: Uuid,
+    version: i32,
+    analysis: String,
+    titles: SqlJson<Vec<String>>,
+    levels: SqlJson<Vec<String>>,
+    excluded_titles: SqlJson<Vec<String>>,
+    min_years: Option<i32>,
+    must_haves: SqlJson<Vec<String>>,
+    capabilities: SqlJson<Vec<String>>,
+    domains: SqlJson<Vec<BriefDomain>>,
+    tools: SqlJson<Vec<BriefTool>>,
+    frameworks: SqlJson<Vec<String>>,
+    certifications: SqlJson<Vec<String>>,
+    locations: SqlJson<Vec<String>>,
+    remote: bool,
+    employer_types: SqlJson<Vec<String>>,
+    leave_out: SqlJson<Vec<String>>,
+    drafted_by_ai: bool,
+    confirmed: bool,
+}
 
-const BRIEF_COLUMNS: &str =
-    "id, version, levels, excluded_titles, must_haves, capabilities, domains, tools, locations,
-     remote, employer_types, leave_out, drafted_by_ai, confirmed_at IS NOT NULL";
+pub(crate) const BRIEF_COLUMNS: &str =
+    "id, version, analysis, titles, levels, excluded_titles, min_years, must_haves, capabilities,
+     domains, tools, frameworks, certifications, locations, remote, employer_types, leave_out,
+     drafted_by_ai, confirmed_at IS NOT NULL AS confirmed";
+
+impl BriefRow {
+    pub(crate) fn lines(self) -> (Uuid, i32, BriefLines) {
+        (
+            self.id,
+            self.version,
+            BriefLines {
+                analysis: self.analysis,
+                titles: self.titles.0,
+                levels: self.levels.0,
+                excluded_titles: self.excluded_titles.0,
+                min_years: self.min_years,
+                must_haves: self.must_haves.0,
+                capabilities: self.capabilities.0,
+                domains: self.domains.0,
+                tools: self.tools.0,
+                frameworks: self.frameworks.0,
+                certifications: self.certifications.0,
+                locations: self.locations.0,
+                remote: self.remote,
+                employer_types: self.employer_types.0,
+                leave_out: self.leave_out.0,
+            },
+        )
+    }
+}
 
 fn brief(r: BriefRow) -> Brief {
+    let (drafted_by_ai, confirmed) = (r.drafted_by_ai, r.confirmed);
+    let (id, version, lines) = r.lines();
     Brief {
-        id: r.0,
-        version: r.1,
-        lines: BriefLines {
-            levels: r.2 .0,
-            excluded_titles: r.3 .0,
-            must_haves: r.4 .0,
-            capabilities: r.5 .0,
-            domains: r.6 .0,
-            tools: r.7 .0,
-            locations: r.8 .0,
-            remote: r.9,
-            employer_types: r.10 .0,
-            leave_out: r.11 .0,
-        },
-        drafted_by_ai: r.12,
-        confirmed: r.13,
+        id,
+        version,
+        lines,
+        drafted_by_ai,
+        confirmed,
     }
 }
 
@@ -568,7 +610,9 @@ async fn write_draft(
     let updated: Option<(Uuid, i32)> = sqlx::query_as(
         "UPDATE brief SET levels = $2, excluded_titles = $3, must_haves = $4, tools = $5,
                 locations = $6, remote = $7, employer_types = $8, leave_out = $9,
-                drafted_by_ai = coalesce($10, drafted_by_ai), capabilities = $11, domains = $12
+                drafted_by_ai = coalesce($10, drafted_by_ai), capabilities = $11, domains = $12,
+                titles = $13, min_years = $14, frameworks = $15, certifications = $16,
+                analysis = $17
          WHERE role_id = $1 AND confirmed_at IS NULL
          RETURNING id, version",
     )
@@ -584,6 +628,11 @@ async fn write_draft(
     .bind(drafted_by_ai)
     .bind(SqlJson(&lines.capabilities))
     .bind(SqlJson(&lines.domains))
+    .bind(SqlJson(&lines.titles))
+    .bind(lines.min_years)
+    .bind(SqlJson(&lines.frameworks))
+    .bind(SqlJson(&lines.certifications))
+    .bind(&lines.analysis)
     .fetch_optional(&mut **tx)
     .await?;
     if let Some(done) = updated {
@@ -592,9 +641,10 @@ async fn write_draft(
     Ok(sqlx::query_as(
         "INSERT INTO brief (org_id, role_id, version, levels, excluded_titles, must_haves, tools,
                             locations, remote, employer_types, leave_out, drafted_by_ai,
-                            capabilities, domains)
+                            capabilities, domains, titles, min_years, frameworks,
+                            certifications, analysis)
          SELECT $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                $12, $13
+                $12, $13, $14, $15, $16, $17, $18
          FROM brief WHERE role_id = $2
          RETURNING id, version",
     )
@@ -611,12 +661,18 @@ async fn write_draft(
     .bind(drafted_by_ai.unwrap_or(false))
     .bind(SqlJson(&lines.capabilities))
     .bind(SqlJson(&lines.domains))
+    .bind(SqlJson(&lines.titles))
+    .bind(lines.min_years)
+    .bind(SqlJson(&lines.frameworks))
+    .bind(SqlJson(&lines.certifications))
+    .bind(&lines.analysis)
     .fetch_one(&mut **tx)
     .await?)
 }
 
-/// A fresh draft from Claude replaces the spec-based lines (levels,
-/// must-haves, capabilities, domains, tools, locations) but keeps the
+/// A fresh draft from Claude replaces the spec-based lines (the read of the
+/// spec, titles, levels, years, must-haves, capabilities, domains, tools,
+/// standards, certifications, locations) but keeps the
 /// resourcer's own choices: excluded titles, employer types, leave-out list,
 /// every tool answer for a tool that is still named, and the Must or Plus
 /// choice for a domain that is still named.
@@ -860,6 +916,7 @@ mod tests {
 
     fn ready() -> BriefLines {
         BriefLines {
+            titles: vec!["Security Engineer".into()],
             levels: vec!["Senior".into()],
             excluded_titles: vec!["Director".into()],
             must_haves: vec!["IAM".into()],
@@ -873,6 +930,7 @@ mod tests {
             remote: false,
             employer_types: vec!["Trading firms".into()],
             leave_out: vec![],
+            ..Default::default()
         }
     }
 
@@ -905,8 +963,40 @@ mod tests {
     fn missing_lines_are_named() {
         let l = BriefLines::default();
         let p = problems(&l);
-        assert_eq!(p.len(), 5, "{p:?}");
+        assert_eq!(p.len(), 6, "{p:?}");
+        assert!(p.contains(&"Add at least one job title to search.".to_string()));
         assert!(p.contains(&"Add at least one domain focus.".to_string()));
+    }
+
+    #[test]
+    fn tidy_checks_the_new_lines() {
+        let l = BriefLines {
+            titles: vec![
+                " Security Engineer ".into(),
+                "security engineer".into(),
+                "".into(),
+            ],
+            frameworks: vec!["DORA".into(), "dora".into()],
+            analysis: "  A read.  ".into(),
+            min_years: Some(7),
+            ..ready()
+        };
+        let t = tidy(l).unwrap();
+        assert_eq!(t.titles, ["Security Engineer"]);
+        assert_eq!(t.frameworks, ["DORA"]);
+        assert_eq!(t.analysis, "A read.");
+        for bad in [-1, 41] {
+            let l = BriefLines {
+                min_years: Some(bad),
+                ..ready()
+            };
+            assert!(tidy(l).is_err(), "{bad} years refused");
+        }
+        let long = BriefLines {
+            analysis: "x".repeat(MAX_ANALYSIS_CHARS + 1),
+            ..ready()
+        };
+        assert!(tidy(long).is_err());
     }
 
     #[tokio::test]
@@ -930,6 +1020,11 @@ mod tests {
         old.excluded_titles = vec!["VP".into()];
         old.employer_types = vec!["Adtech".into()];
         let fresh = BriefLines {
+            analysis: "Hands-on IAM lead.".into(),
+            titles: vec!["IAM Engineer".into()],
+            min_years: Some(8),
+            frameworks: vec!["DORA".into()],
+            certifications: vec!["CISSP".into()],
             levels: vec!["Lead".into()],
             excluded_titles: vec!["Director".into()],
             must_haves: vec!["Go".into()],
@@ -955,6 +1050,11 @@ mod tests {
         };
         let m = merge_redraft(fresh, Some(old));
         assert_eq!(m.levels, ["Lead"], "spec lines come from the new draft");
+        assert_eq!(m.titles, ["IAM Engineer"]);
+        assert_eq!(m.min_years, Some(8));
+        assert_eq!(m.frameworks, ["DORA"]);
+        assert_eq!(m.certifications, ["CISSP"]);
+        assert_eq!(m.analysis, "Hands-on IAM lead.");
         assert_eq!(m.locations, ["London"]);
         assert_eq!(m.leave_out, ["Some Bank"]);
         assert_eq!(m.excluded_titles, ["VP"]);
