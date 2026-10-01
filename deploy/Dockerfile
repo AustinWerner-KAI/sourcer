@@ -1,15 +1,16 @@
 # Builds the web app and the Rust server into one small image.
 FROM node:22-slim AS web
 WORKDIR /web
-COPY web/package.json ./
-RUN npm install --no-audit --no-fund
+# Exact versions from the lockfile, so every build gets the same packages.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
 FROM rust:1-slim AS server
 WORKDIR /server
 COPY server/ ./
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
