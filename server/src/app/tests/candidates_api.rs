@@ -228,13 +228,46 @@ async fn known_people_are_flagged_and_blocked_people_cannot_be_shortlisted() {
         .await
         .unwrap();
 
+    for (who, kind, value) in [
+        (p0, "phone", "+971 50 000 0000"),
+        (p0, "personal_email", "zed.home@gmail.com"),
+        (p0, "work_email", "zed@samplefirm.com"),
+        (p1, "personal_email", "opted.out@gmail.com"),
+    ] {
+        sqlx::query(
+            "INSERT INTO contact (org_id, person_id, kind, value, source)
+             VALUES ($1, $2, $3::contact_kind, $4, 'pdl')",
+        )
+        .bind(org)
+        .bind(who)
+        .bind(kind)
+        .bind(value)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
     let v = candidates_of(&app, &uri, &me, "review").await;
     let people = v["people"].as_array().unwrap();
     assert_eq!(
         people[0]["known"], "Known: contacted for Platform Lead",
         "flagged, still listed"
     );
+    assert_eq!(
+        people[0]["contacts"],
+        json!([
+            {"kind": "work_email", "value": "zed@samplefirm.com"},
+            {"kind": "personal_email", "value": "zed.home@gmail.com"},
+            {"kind": "phone", "value": "+971 50 000 0000"}
+        ]),
+        "work first, then personal, then phone"
+    );
     assert_eq!(people[1]["do_not_contact"], true);
+    assert_eq!(
+        people[1]["contacts"],
+        json!([]),
+        "never shown for someone who must not be contacted"
+    );
     // The resourcer decides for known people.
     let res = send(&app, decide_req(&me, &people[0], "shortlist", None)).await;
     assert_eq!(res.status(), StatusCode::OK);
