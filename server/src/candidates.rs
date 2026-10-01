@@ -131,6 +131,8 @@ impl RankHandler {
         let Some((_, version, lines)) = confirmed_brief(pool, role_id).await? else {
             return Ok(0);
         };
+        // The resourcer's latest feedback, so ranking calibrates to it.
+        let lessons = crate::cv::lessons(pool, org_id).await?;
         let mut tried: Vec<Uuid> = Vec::new();
         let mut ranked = 0;
         for _ in 0..MAX_BATCHES {
@@ -198,7 +200,7 @@ impl RankHandler {
                 .collect();
             let results = self
                 .ai
-                .rank(&lines, &inputs)
+                .rank(&lines, &inputs, &lessons)
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
                 .context("ranking failed")?;
@@ -286,6 +288,7 @@ struct Row {
     has_email: bool,
     has_phone: bool,
     contacts: Vec<String>,
+    cv_score: Option<i32>,
     dnc: bool,
     other_state: Option<String>,
     other_title: Option<String>,
@@ -307,6 +310,9 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
        ARRAY(SELECT k.kind::text || ':' || k.value FROM contact k
              WHERE k.person_id = p.id AND k.org_id = c.org_id
              ORDER BY k.kind, k.created_at LIMIT 6) AS contacts,
+       (SELECT a.score FROM cv_assessment a JOIN cv v ON v.id = a.cv_id
+        WHERE v.person_id = p.id AND a.role_id = c.role_id AND a.org_id = c.org_id
+        ORDER BY v.created_at DESC LIMIT 1) AS cv_score,
        (p.opted_out OR p.recruitly_dnc OR EXISTS (
           SELECT 1 FROM do_not_contact d
           WHERE d.org_id = c.org_id AND (
@@ -414,6 +420,7 @@ impl From<Row> for CandidateRow {
             } else {
                 contact_lines(&r.contacts)
             },
+            cv_score: r.cv_score,
             reject_reason: r.reason,
             recruitly_note: r.recruitly_note,
             recruitly_checked: r.recruitly_checked_at.is_some(),

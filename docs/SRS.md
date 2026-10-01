@@ -26,7 +26,7 @@ Team size is still to confirm (see open decisions).
 
 ## Functional requirements
 
-26 requirements: 20 must-haves for the first release, 6 nice-to-haves. Each maps to a milestone in the project plan.
+27 requirements: 21 must-haves for the first release, 6 nice-to-haves. Each maps to a milestone in the project plan.
 
 | ID | Requirement | Priority | Milestone |
 | --- | --- | --- | --- |
@@ -56,6 +56,7 @@ Team size is still to confirm (see open decisions).
 | F24 | Owner release: hand a person to a colleague, or ownership lapses after 30 days with no reply | Nice | M2 |
 | F25 | Weekly summary of activity and results per resourcer | Nice | M3 |
 | F26 | Chat or MCP access to Sourcer from Claude | Nice | Later |
+| F27 | CV assessment: upload a candidate's CV (PDF, Word or text); Claude scores it out of 10 against the role and any other roles ticked, with matches, where it falls short, flags, questions to ask and an overall call. Name, emails, phones and links are removed before it is stored or sent; the file is not kept. One click adds it to Recruitly as a note. The resourcer rates each score (accurate, too high, too low, their own score, vital questions); the latest ratings calibrate later assessments and rankings | Must | M1 |
 
 ## Non-functional requirements
 
@@ -150,6 +151,7 @@ This SRS is the source of truth. Any change to scope or requirements is recorded
 
 | Date | Change |
 | --- | --- |
+| 1 Oct 2026 | F27 added (Kai): CV assessment out of 10, pushed to Recruitly notes, with a feedback loop into ranking. First live case: a highly ranked candidate's CV assessed 7/10, confirmed accurate by Kai |
 | 1 Oct 2026 | N9 changed (Kai): PDL personal emails are kept and usable for cold outreach, in every market. Risk noted: UK PECR needs prior consent to email an individual's personal address; the UAE PDPL is consent-based. D9 adviser sign-off still open |
 | 30 Sep 2026 | D10 decided: Recruitly. F2: roles can start from a Recruitly job. F7: Recruitly check at shortlist. F18: add to Recruitly, moved to M1 (Kai: check on shortlist, button on shortlisted, link roles to jobs, pull the spec and client from Recruitly) |
 | 30 Sep 2026 | F10: LinkedIn save button built as a Chrome extension (Kai: Chrome, save straight to a role). Recruitly is the CRM/ATS for the known check and handover (D10, to plan) |

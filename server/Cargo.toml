@@ -22,6 +22,9 @@ rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
 unicode-normalization = "0.1"
+pdf-extract = "0.12"
+regex = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

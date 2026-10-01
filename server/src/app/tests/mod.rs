@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 mod auth_api;
 mod candidates_api;
+mod cv_api;
 mod people_api;
 mod recruitly_api;
 mod roles_api;
@@ -282,6 +283,19 @@ async fn fake_ranker() -> (String, Bodies) {
             async move {
                 seen.lock().unwrap().push(body.clone());
                 let text = body["messages"][0]["content"].as_str().unwrap().to_string();
+                // A CV assessment: 7/10 for the first role, 5/10 for the rest.
+                if body["tools"][0]["name"] == "record_assessment" {
+                    let roles = text.split("</roles>").next().unwrap().matches("\"id\": \"r").count();
+                    let out: Vec<Value> = (1..=roles)
+                        .map(|i| json!({"id": format!("r{i}"), "fit_title": format!("Fit {i}"),
+                                        "score": if i == 1 { 7 } else { 5 },
+                                        "matches": ["AWS Security Specialty"], "gaps": ["Detection is triage"],
+                                        "flags": ["Integrator work"],
+                                        "questions": ["Which parts did you deploy yourself?", "Salary and notice period?"]}))
+                        .collect();
+                    return Json(json!({"content": [{"type": "tool_use", "id": "t", "name": "record_assessment",
+                                                     "input": {"roles": out, "call": "Call this week."}}]}));
+                }
                 let n = text.matches("\"id\": \"c").count();
                 // One verdict per checklist item, as Claude is asked to give.
                 let brief: Value = serde_json::from_str(
