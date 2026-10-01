@@ -63,8 +63,23 @@ pub fn problems(l: &BriefLines) -> Vec<String> {
     if l.titles.is_empty() {
         out.push("Add at least one job title to search.".to_string());
     }
+    if l.titles.len() > crate::plan::MAX_TITLES {
+        out.push(format!(
+            "Keep to {} job titles; People Data Labs limits how many one search can hold.",
+            crate::plan::MAX_TITLES
+        ));
+    }
     if l.levels.is_empty() {
         out.push("Choose at least one level.".to_string());
+    }
+    if l.levels.len() > crate::plan::MAX_LEVELS {
+        out.push(format!("Keep to {} levels.", crate::plan::MAX_LEVELS));
+    }
+    if crate::plan::plain_exclusions(&l.excluded_titles).len() > crate::plan::MAX_PLAIN_EXCLUSIONS {
+        out.push(format!(
+            "The \"not\" list can hold Manager, Director, VP and Chief plus {} other words.",
+            crate::plan::MAX_PLAIN_EXCLUSIONS
+        ));
     }
     if l.must_haves.is_empty() {
         out.push("Add at least one must-have.".to_string());
@@ -966,6 +981,33 @@ mod tests {
         assert_eq!(p.len(), 6, "{p:?}");
         assert!(p.contains(&"Add at least one job title to search.".to_string()));
         assert!(p.contains(&"Add at least one domain focus.".to_string()));
+    }
+
+    #[test]
+    fn a_brief_too_big_for_one_pdl_search_is_named() {
+        let l = BriefLines {
+            titles: (0..11).map(|i| format!("Title {i}")).collect(),
+            levels: (0..7).map(|i| format!("Level {i}")).collect(),
+            excluded_titles: ["Manager", "Director", "VP", "Chief", "A", "B", "C", "D"]
+                .map(String::from)
+                .to_vec(),
+            ..ready()
+        };
+        assert_eq!(
+            problems(&l).len(),
+            2,
+            "four plain words fit: {:?}",
+            problems(&l)
+        );
+        let l = BriefLines {
+            excluded_titles: ["A", "B", "C", "D", "E"].map(String::from).to_vec(),
+            ..l
+        };
+        let p = problems(&l);
+        assert_eq!(p.len(), 3, "{p:?}");
+        assert!(p[0].starts_with("Keep to 10 job titles"));
+        assert_eq!(p[1], "Keep to 6 levels.");
+        assert!(p[2].contains("plus 4 other words"));
     }
 
     #[test]

@@ -8,6 +8,12 @@
 //! domains only rank, later. Each location is its own search, so a small market such
 //! as Dubai is counted and pulled on its own.
 //!
+//! PDL stores `job_title` as one exact value, so a phrase only matches the
+//! whole title. Titles and levels therefore match as "contains" wildcards,
+//! and excluded levels use PDL's level tags where one exists. PDL allows at
+//! most 20 wildcards in one search; the caps below keep every search inside
+//! that, and the brief cannot be confirmed past them.
+//!
 //! Pure, so it is tested without a network.
 
 use serde_json::{json, Value};
@@ -21,6 +27,14 @@ use crate::{
 pub const MAX_LOCATIONS: usize = 10;
 /// Label for the single search when remote counts and no city is given.
 pub const ANYWHERE: &str = "Anywhere (remote)";
+/// PDL refuses a search with more wildcards than this.
+pub const MAX_WILDCARDS: usize = 20;
+/// Job titles searched (each is one wildcard).
+pub const MAX_TITLES: usize = 10;
+/// Levels searched (each is one wildcard).
+pub const MAX_LEVELS: usize = 6;
+/// Excluded titles with no PDL level tag (each is one wildcard).
+pub const MAX_PLAIN_EXCLUSIONS: usize = MAX_WILDCARDS - MAX_TITLES - MAX_LEVELS;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationSearch {
@@ -51,19 +65,55 @@ fn industries(employer_type: &str) -> Vec<&'static str> {
     }
 }
 
+/// PDL's level tag for an excluded title word, when there is one. PDL
+/// writes "VP" out as "vice president" in titles, so only the tag finds it.
+pub fn level_tag(word: &str) -> Option<&'static str> {
+    match word.trim().to_lowercase().as_str() {
+        "manager" => Some("manager"),
+        "director" => Some("director"),
+        "vp" | "vice president" | "svp" | "evp" => Some("vp"),
+        "chief" | "cxo" | "c-level" | "c-suite" => Some("cxo"),
+        "owner" => Some("owner"),
+        "partner" => Some("partner"),
+        _ => None,
+    }
+}
+
+/// Excluded title words that need a wildcard because PDL has no tag for them.
+pub fn plain_exclusions(excluded: &[String]) -> Vec<&String> {
+    excluded.iter().filter(|w| level_tag(w).is_none()).collect()
+}
+
 fn phrase(field: &str, text: &str) -> Value {
     json!({"match_phrase": {field: text.to_lowercase()}})
 }
 
-fn any_of(clauses: Vec<Value>) -> Value {
-    json!({"bool": {"should": clauses, "minimum_should_match": 1}})
+/// The text anywhere inside a keyword field such as `job_title`.
+fn contains(field: &str, text: &str) -> Value {
+    let mut pattern = String::from("*");
+    for c in text.trim().to_lowercase().chars() {
+        if matches!(c, '*' | '?' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern.push('*');
+    json!({"wildcard": {field: pattern}})
 }
 
-/// A word or phrase anywhere a person describes their work.
+/// At least one of the clauses. PDL refuses `minimum_should_match`, but a
+/// bool with only `should` clauses already needs one of them to match.
+fn any_of(clauses: Vec<Value>) -> Value {
+    json!({"bool": {"should": clauses}})
+}
+
+/// A word or phrase anywhere a person describes their work. These are text
+/// fields (or the skills list), so a phrase matches inside them.
 fn mentions(text: &str) -> Vec<Value> {
     vec![
-        phrase("job_title", text),
+        phrase("headline", text),
         phrase("summary", text),
+        phrase("job_summary", text),
         json!({"term": {"skills": text.to_lowercase()}}),
     ]
 }
@@ -96,7 +146,8 @@ pub fn plan(lines: &BriefLines, locked_out: &[Company]) -> Vec<LocationSearch> {
             lines
                 .titles
                 .iter()
-                .map(|t| phrase("job_title", t))
+                .take(MAX_TITLES)
+                .map(|t| contains("job_title", t))
                 .collect(),
         ));
     }
@@ -105,11 +156,27 @@ pub fn plan(lines: &BriefLines, locked_out: &[Company]) -> Vec<LocationSearch> {
             lines
                 .levels
                 .iter()
-                .map(|l| phrase("job_title", l))
+                .take(MAX_LEVELS)
+                .map(|l| contains("job_title", l))
                 .collect(),
         ));
     }
-    must_not.extend(lines.excluded_titles.iter().map(|t| phrase("job_title", t)));
+    let mut tags: Vec<&str> = lines
+        .excluded_titles
+        .iter()
+        .filter_map(|w| level_tag(w))
+        .collect();
+    tags.sort_unstable();
+    tags.dedup();
+    if !tags.is_empty() {
+        must_not.push(json!({"terms": {"job_title_levels": tags}}));
+    }
+    must_not.extend(
+        plain_exclusions(&lines.excluded_titles)
+            .into_iter()
+            .take(MAX_PLAIN_EXCLUSIONS)
+            .map(|w| contains("job_title", w)),
+    );
     if let Some(years) = lines.min_years.filter(|y| *y > 0) {
         must.push(json!({"range": {"inferred_years_experience": {"gte": years}}}));
     }
@@ -296,9 +363,9 @@ mod tests {
         let q = plan(&brief(), &[]).remove(0).query;
         let must = q["bool"]["must"].as_array().unwrap();
         let titles = text(&must[0]);
-        assert!(titles.contains("\"job_title\":\"security engineer\""));
+        assert!(titles.contains("{\"wildcard\":{\"job_title\":\"*security engineer*\"}}"));
         assert!(!titles.contains("senior"), "titles and levels are separate");
-        assert!(text(&must[1]).contains("\"job_title\":\"senior\""));
+        assert!(text(&must[1]).contains("{\"wildcard\":{\"job_title\":\"*senior*\"}}"));
     }
 
     #[test]
@@ -325,7 +392,10 @@ mod tests {
             "{not}"
         );
         assert!(not.contains("some bank"));
-        assert!(not.contains("\"job_title\":\"director\""));
+        assert!(
+            not.contains("{\"terms\":{\"job_title_levels\":[\"director\"]}}"),
+            "{not}"
+        );
     }
 
     #[test]
@@ -357,6 +427,118 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label, ANYWHERE);
         assert!(!text(&p[0].query).contains("location_name"));
+    }
+
+    /// Every key PDL accepts in a query. Anything else (such as
+    /// `minimum_should_match` or `boost`) is refused with a 400.
+    fn only_pdl_clauses(v: &Value, path: &str) {
+        const QUERIES: [&str; 10] = [
+            "term",
+            "terms",
+            "exists",
+            "bool",
+            "match",
+            "range",
+            "match_phrase",
+            "wildcard",
+            "prefix",
+            "match_all",
+        ];
+        const BOOL: [&str; 4] = ["must", "must_not", "should", "filter"];
+        let obj = v
+            .as_object()
+            .unwrap_or_else(|| panic!("{path} is not a query"));
+        for (k, inner) in obj {
+            assert!(
+                QUERIES.contains(&k.as_str()),
+                "{path}.{k} is not allowed by PDL"
+            );
+            if k == "bool" {
+                for (clause, list) in inner.as_object().unwrap() {
+                    assert!(
+                        BOOL.contains(&clause.as_str()),
+                        "{path}.bool.{clause} is not allowed by PDL"
+                    );
+                    for (i, q) in list.as_array().unwrap().iter().enumerate() {
+                        only_pdl_clauses(q, &format!("{path}.bool.{clause}[{i}]"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_search_uses_only_what_pdl_accepts() {
+        for s in plan(&brief(), &[client()]) {
+            only_pdl_clauses(&s.query, &s.label);
+        }
+        let mut remote = brief();
+        remote.locations.clear();
+        remote.remote = true;
+        for s in plan(&remote, &[]) {
+            only_pdl_clauses(&s.query, &s.label);
+        }
+    }
+
+    fn wildcards(v: &Value) -> usize {
+        text(v).matches("\"wildcard\"").count()
+    }
+
+    #[test]
+    fn excluded_levels_use_pdl_tags_and_other_words_a_wildcard() {
+        let mut b = brief();
+        b.excluded_titles = [
+            "Manager",
+            "Director",
+            "Head of",
+            "VP",
+            "Chief",
+            "vice president",
+        ]
+        .map(String::from)
+        .to_vec();
+        let q = plan(&b, &[]).remove(0).query;
+        let not = text(&q["bool"]["must_not"]);
+        assert!(
+            not.contains(
+                "{\"terms\":{\"job_title_levels\":[\"cxo\",\"director\",\"manager\",\"vp\"]}}"
+            ),
+            "{not}"
+        );
+        assert!(not.contains("{\"wildcard\":{\"job_title\":\"*head of*\"}}"));
+        assert!(
+            !not.contains("*vp*"),
+            "PDL writes VP out, so a wildcard never matches"
+        );
+    }
+
+    #[test]
+    fn tools_and_domains_match_inside_text_fields_not_the_exact_title() {
+        let q = text(&plan(&brief(), &[])[0].query);
+        assert!(q.contains("{\"match_phrase\":{\"summary\":\"okta\"}}"));
+        assert!(q.contains("{\"match_phrase\":{\"headline\":\"okta\"}}"));
+        assert!(q.contains("{\"term\":{\"skills\":\"okta\"}}"));
+        assert!(!q.contains("{\"match_phrase\":{\"job_title\""), "{q}");
+    }
+
+    #[test]
+    fn wildcard_text_is_escaped() {
+        assert_eq!(
+            contains("job_title", " C++ *Lead?\\ "),
+            json!({"wildcard": {"job_title": "*c++ \\*lead\\?\\\\*"}})
+        );
+    }
+
+    #[test]
+    fn a_full_brief_stays_within_pdls_wildcard_limit() {
+        let mut b = brief();
+        b.titles = (0..15).map(|i| format!("Title {i}")).collect();
+        b.levels = (0..9).map(|i| format!("Level {i}")).collect();
+        b.excluded_titles = (0..9).map(|i| format!("Not {i}")).collect();
+        b.excluded_titles.push("Director".into());
+        let q = plan(&b, &[client()]).remove(0).query;
+        assert_eq!(wildcards(&q), MAX_WILDCARDS);
+        assert!(text(&q).contains("title 9") && !text(&q).contains("title 10"));
     }
 
     #[test]
