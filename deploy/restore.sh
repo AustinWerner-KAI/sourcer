@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
 # Replace the Sourcer database with a backup made by backup.sh.
 # Usage: deploy/restore.sh ~/sourcer-backups/sourcer-2026-09-29-020000.dump
+# An encrypted copy from Google Drive (.dump.enc) works too; it needs the key
+# in ~/.sourcer-backup-key (or KEY_FILE=...).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 file="${1:-}"
+name="$file"
 if [ -z "$file" ] || [ ! -f "$file" ]; then
   echo "Usage: $0 <backup file>" >&2
   exit 1
 fi
+if [[ "$file" == *.enc ]]; then
+  key="${KEY_FILE:-$HOME/.sourcer-backup-key}"
+  [ -s "$key" ] || { echo "No key at $key. Put the saved key there first." >&2; exit 1; }
+  plain="$(mktemp "${TMPDIR:-/tmp}/sourcer-restore.XXXXXX")"
+  trap 'rm -f "$plain"' EXIT
+  openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$key" -in "$file" -out "$plain"
+  file="$plain"
+fi
 docker compose exec -T db pg_restore --list < "$file" >/dev/null
 
 if [ "${RESTORE_CONFIRM:-}" != "yes" ]; then
-  read -r -p "This replaces ALL current Sourcer data with $file. Type 'yes' to continue: " answer
+  read -r -p "This replaces ALL current Sourcer data with $name. Type 'yes' to continue: " answer
   [ "$answer" = "yes" ] || { echo "Cancelled."; exit 1; }
 fi
 
@@ -24,4 +35,4 @@ docker compose exec -T db dropdb -U sourcer --if-exists sourcer
 docker compose exec -T db createdb -U sourcer sourcer
 docker compose exec -T db pg_restore -U sourcer -d sourcer --no-owner < "$file"
 docker compose start server
-echo "Restored from $file"
+echo "Restored from $name"
