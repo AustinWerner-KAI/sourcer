@@ -324,7 +324,7 @@ Be precise about the difference between building and overseeing, between writing
 triaging, and between the person's own work and a project their employer delivered.
 
 call: two or three sentences across all the roles: what the recruiter should do next and \
-which role to lead with.
+which role to lead with. Name roles by their title, never by their id.
 
 If recruiter feedback is given, calibrate to it: it records where earlier scores were too \
 high or too low and which questions mattered. Never mention or guess age, gender, ethnicity, \
@@ -468,6 +468,19 @@ pub fn tidy_role(r: &RoleReply, fallback_title: &str) -> Option<Tidy> {
         flags: clip_list(&r.flags, MAX_ITEMS),
         questions: clip_list(&r.questions, MAX_QUESTIONS),
     })
+}
+
+/// Role ids such as "r1" replaced by the role's title, in case Claude used them.
+pub fn name_roles(text: &str, titles: &[(String, &str)]) -> String {
+    let mut out = text.to_string();
+    // Longest id first, so "r1" never eats part of "r10".
+    let mut ids: Vec<&(String, &str)> = titles.iter().collect();
+    ids.sort_by_key(|(id, _)| std::cmp::Reverse(id.len()));
+    for (id, title) in ids {
+        let word = re(&format!(r"\b{}\b", regex::escape(id)));
+        out = word.replace_all(&out, *title).into_owned();
+    }
+    out
 }
 
 // ---------- The feedback loop ----------
@@ -1018,7 +1031,12 @@ async fn assess(
             "Claude's assessment came back incomplete. Try again.",
         ));
     }
-    let call = clip(&reply.call, MAX_CALL_CHARS);
+    let titles: Vec<(String, &str)> = roles
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (format!("r{}", i + 1), r.title.as_str()))
+        .collect();
+    let call = clip(&name_roles(&reply.call, &titles), MAX_CALL_CHARS);
     let saved = async {
         let mut tx = pool.begin().await?;
         for (r, t) in &usable {
@@ -1380,6 +1398,18 @@ mod tests {
         assert!(tidy_role(&bad, "x").is_none());
         let float: RoleReply = serde_json::from_value(json!({"id": "r1", "score": 6.6})).unwrap();
         assert_eq!(tidy_role(&float, "x").unwrap().score, 7);
+    }
+
+    #[test]
+    fn role_ids_never_reach_the_screen() {
+        let t = vec![
+            ("r1".to_string(), "Senior Cloud Security Engineer"),
+            ("r2".to_string(), "Senior IAM Engineer"),
+        ];
+        assert_eq!(
+            name_roles("Submit to r1 only if he holds up; r2 later. Keep r10 and pr1.", &t),
+            "Submit to Senior Cloud Security Engineer only if he holds up; Senior IAM Engineer later. Keep r10 and pr1."
+        );
     }
 
     #[test]
