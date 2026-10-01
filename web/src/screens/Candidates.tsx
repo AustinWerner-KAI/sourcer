@@ -11,6 +11,7 @@ import type { DecisionAction } from "../api/types/DecisionAction";
 import type { ReasonCode } from "../api/types/ReasonCode";
 import type { RecruitlyLink } from "../api/types/RecruitlyLink";
 import { Steps } from "./Briefs";
+import { CvLine } from "./Cv";
 import { ago, jobRef, RecruitlyJobBar } from "./Recruitly";
 
 const TABS: { tab: CandidateTab; label: string }[] = [
@@ -240,6 +241,7 @@ function Person({
           </div>
         )}
         <Reach contacts={p.contacts} blocked={p.do_not_contact} />
+        {tab !== "rejected" && ranked && <CvLine p={p} roleId={roleId} />}
         {recruitly && tab === "shortlisted" && <RecruitlyLine p={p} roleId={roleId} job={job} />}
       </div>
       <div className="acts">
