@@ -1,5 +1,5 @@
-//! Email outreach, part one (SRS F12, F13): drafts and approval. Nothing is
-//! sent from here; sending comes with the Outlook connection (F14).
+//! Email outreach (SRS F12, F13): drafts and approval. Nothing is sent from
+//! here; `sending.rs` sends approved emails from the sender's Outlook (F14).
 //!
 //! Kai's rules (1 Oct 2026):
 //! - Email only to a personal email address. No personal email, no email.
@@ -71,6 +71,8 @@ pub struct OutreachStepView {
     /// How it will look, signature and source line included.
     pub html: String,
     pub sent_at: Option<String>,
+    /// When an unsent follow-up is due (Dubai date), once the one before it went.
+    pub due: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -91,8 +93,10 @@ pub struct OutreachView {
     pub approved_at: Option<String>,
     /// Sent back with changes, so two windows cannot overwrite each other.
     pub version: i32,
-    /// The Outlook connection is set up, so approved emails will go out.
+    /// The sender's Outlook is connected and working, so approved emails go out.
     pub sending_ready: bool,
+    /// "reply", "auto" (an automatic reply) or "bounce", once one arrives.
+    pub reply_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -478,6 +482,7 @@ async fn view(
             approved_at: None,
             version: 0,
             sending_ready: false,
+            reply_kind: None,
         }));
     };
     let steps: Vec<StepRow> = sqlx::query_as(
@@ -496,6 +501,25 @@ async fn view(
     .bind(id)
     .fetch_one(pool)
     .await?;
+    let (sending_ready, reply_kind): (bool, Option<String>) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM mailbox m WHERE m.user_id = o.sender_id AND m.broken IS NULL),
+                o.reply_kind
+         FROM outreach o WHERE o.id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    let mut prev_sent = None;
+    let mut due = Vec::with_capacity(steps.len());
+    for (_, delay, _, _, sent_at) in &steps {
+        due.push(match (sent_at, prev_sent) {
+            (None, Some(p)) => Some(crate::sending::dubai_date(
+                p + chrono::Duration::days(i64::from(*delay)),
+            )),
+            _ => None,
+        });
+        prev_sent = *sent_at;
+    }
     let (problems, notes) = if status == OutreachStatus::Draft {
         checks(
             pool, org_id, candidacy, &ctx, &sender, &to_email, &signature, &steps,
@@ -510,14 +534,20 @@ async fn view(
         sender,
         steps: steps
             .into_iter()
+            .zip(due)
             .map(
-                |(step, delay_days, subject, body, sent_at)| OutreachStepView {
+                |((step, delay_days, subject, body, sent_at), due)| OutreachStepView {
                     html: render_html(&body, &signature, step == 1),
                     step,
                     delay_days,
                     subject,
                     body,
-                    sent_at: sent_at.map(|t| t.format("%-d %b %Y %H:%M").to_string()),
+                    sent_at: sent_at.map(crate::sending::dubai_time),
+                    due: if status == OutreachStatus::Active {
+                        due
+                    } else {
+                        None
+                    },
                 },
             )
             .collect(),
@@ -526,8 +556,66 @@ async fn view(
         stop_reason,
         approved_at: approved_at.map(|t| t.format("%-d %b %Y").to_string()),
         version,
-        sending_ready: false,
+        sending_ready,
+        reply_kind,
     }))
+}
+
+/// What stops this sequence going out now, in words: the same checks as at
+/// approval, run again just before every email, against the copy of the
+/// signature saved at approval. Empty when it may go.
+pub async fn problems_before_send(
+    pool: &PgPool,
+    org_id: Uuid,
+    candidacy: Uuid,
+    sender_id: Uuid,
+) -> anyhow::Result<Vec<String>> {
+    let Some(ctx) = context(pool, org_id, sender_id, candidacy).await? else {
+        return Ok(vec!["The person or role no longer exists.".into()]);
+    };
+    let row: Option<(Uuid, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, to_email, signature FROM outreach WHERE candidacy_id = $1 AND org_id = $2",
+    )
+    .bind(candidacy)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, to_email, signature)) = row else {
+        return Ok(vec!["The emails no longer exist.".into()]);
+    };
+    let steps: Vec<StepRow> = sqlx::query_as(
+        "SELECT step, delay_days, subject, body, sent_at FROM outreach_step
+         WHERE outreach_id = $1 ORDER BY step",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    let signature = signature.unwrap_or_default();
+    let (mut problems, _) = checks(
+        pool,
+        org_id,
+        candidacy,
+        &ctx,
+        &ctx.sender,
+        &to_email,
+        &signature,
+        &steps,
+    )
+    .await?;
+    // A reply on any channel, for any role, since these were approved.
+    let replied: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM touch t JOIN outreach o ON o.id = $2
+                        WHERE t.person_id = $1 AND t.org_id = o.org_id AND t.direction = 'in'
+                          AND t.at >= o.approved_at)",
+    )
+    .bind(ctx.person_id)
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    if replied {
+        problems.push("They replied since these were approved.".into());
+    }
+    Ok(problems)
 }
 
 /// What stops approval, and what is only worth a look.
@@ -703,6 +791,26 @@ pub async fn start(
         }
         _ => {}
     }
+    // Once an email has gone, or may have, these are never drafted again.
+    if let Some((id, _)) = existing {
+        let went: Result<bool, _> = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM outreach_step WHERE outreach_id = $1
+                            AND (sent_at IS NOT NULL OR sending_since IS NOT NULL))",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await;
+        match went {
+            Ok(true) => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "Emails already went to them for this role, so they cannot be emailed again from here.",
+                )
+            }
+            Ok(false) => {}
+            Err(e) => return server_error(e),
+        }
+    }
     let can_start = matches!(
         (ctx.state, existing.map(|e| e.1)),
         (CandidacyState::Shortlisted, _) | (CandidacyState::Drafted, Some(OutreachStatus::Draft))
@@ -747,6 +855,8 @@ pub async fn start(
                     signature = NULL, version = outreach.version + 1, updated_at = now()
              WHERE outreach.status IN ('draft', 'stopped')
                AND ($5::int IS NULL OR outreach.version = $5)
+               AND NOT EXISTS (SELECT 1 FROM outreach_step x WHERE x.outreach_id = outreach.id
+                                 AND (x.sent_at IS NOT NULL OR x.sending_since IS NOT NULL))
              RETURNING id",
         )
         .bind(user.org_id)

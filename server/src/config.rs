@@ -32,6 +32,9 @@ pub struct Config {
     pub recruitly_api_key: Option<String>,
     /// Most Recruitly calls per day. Defaults below the plan's limit.
     pub recruitly_daily_cap: Option<i64>,
+    /// Encrypts each person's Outlook connection at rest: 32 random bytes,
+    /// base64. Generated into deploy/.env by start.sh. Sending is off until set.
+    pub mail_token_key: Option<String>,
 }
 
 impl std::fmt::Debug for Config {
@@ -53,6 +56,7 @@ impl std::fmt::Debug for Config {
             .field("anthropic_draft_model", &self.anthropic_draft_model)
             .field("recruitly_api_key", &set(&self.recruitly_api_key))
             .field("recruitly_daily_cap", &self.recruitly_daily_cap)
+            .field("mail_token_key", &set(&self.mail_token_key))
             .finish()
     }
 }
@@ -88,6 +92,7 @@ impl Config {
                 ),
                 None => None,
             },
+            mail_token_key: secret("MAIL_TOKEN_KEY"),
         };
         config.validate()?;
         Ok(config)
@@ -110,6 +115,18 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Outlook sending settings, or `None` until sign-in and the key are set.
+    pub fn mail(&self) -> Result<Option<crate::mail::MailConfig>> {
+        let (Some(auth), Some(key)) = (self.auth(), self.mail_token_key.as_deref()) else {
+            return Ok(None);
+        };
+        Ok(Some(crate::mail::MailConfig::new(
+            &auth,
+            &self.public_url,
+            key,
+        )?))
     }
 
     /// Sign-in settings, or `None` if the app registration is incomplete.
@@ -146,6 +163,7 @@ mod tests {
             anthropic_draft_model: None,
             recruitly_api_key: Some("rc-secret".into()),
             recruitly_daily_cap: None,
+            mail_token_key: Some("mail-secret".into()),
         };
         let out = format!("{c:?}");
         assert!(
@@ -154,6 +172,7 @@ mod tests {
                 && !out.contains("ms-secret")
                 && !out.contains("sk-ant-secret")
                 && !out.contains("rc-secret")
+                && !out.contains("mail-secret")
         );
         assert!(out.contains("<set>") && out.contains("<unset>"));
         assert!(c.auth().is_some());
@@ -185,6 +204,7 @@ mod tests {
             anthropic_draft_model: None,
             recruitly_api_key: None,
             recruitly_daily_cap: None,
+            mail_token_key: None,
         };
         assert!(base.validate().is_ok());
         for bad in [
