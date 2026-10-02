@@ -89,15 +89,17 @@ pub(crate) async fn blocked(
     role_id: Uuid,
     has_brief: bool,
 ) -> anyhow::Result<Option<&'static str>> {
-    let (paused, has_client): (bool, bool) = sqlx::query_as(
-        "SELECT o.paid_calls_paused, r.client_id IS NOT NULL
+    let (closed, paused, has_client): (bool, bool, bool) = sqlx::query_as(
+        "SELECT r.closed_at IS NOT NULL, o.paid_calls_paused, r.client_id IS NOT NULL
          FROM role r JOIN org o ON o.id = r.org_id WHERE r.id = $1 AND r.org_id = $2",
     )
     .bind(role_id)
     .bind(org_id)
     .fetch_one(pool)
     .await?;
-    Ok(if paused {
+    Ok(if closed {
+        Some("This role is closed. Reopen it on the Roles page to search again.")
+    } else if paused {
         Some("Paid searches are paused by an admin. Nothing was spent.")
     } else if !state.pdl.configured() {
         Some("People Data Labs is not set up yet (no key). Nothing was spent.")
