@@ -742,6 +742,12 @@ pub async fn decide(
     }
     let result = async {
         let mut tx = pool.begin().await?;
+        // Their emails first, in the same order as the sender, so a reject
+        // during a send waits for it instead of deadlocking.
+        sqlx::query("SELECT id FROM outreach WHERE candidacy_id = $1 FOR UPDATE")
+            .bind(candidacy)
+            .fetch_optional(&mut *tx)
+            .await?;
         let changed = sqlx::query(
             "UPDATE candidacy SET state = $3, reason = $4, decided_by = $5, decided_at = now(),
                     version = version + 1

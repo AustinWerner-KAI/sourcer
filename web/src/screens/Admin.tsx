@@ -44,7 +44,7 @@ export function Controls() {
     mutationFn: api.saveControls,
     onSuccess: (c) => queryClient.setQueryData(["controls"], c),
   });
-  const set = (change: Partial<ControlsT>) => q.data && save.mutate({ ...q.data, ...change });
+  const set = (change: Partial<ControlsT>) => save.mutate(change);
 
   return (
     <>
