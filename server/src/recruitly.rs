@@ -360,6 +360,8 @@ pub struct Job {
     pub reference: Option<String>,
     pub company_id: Option<String>,
     pub company_name: Option<String>,
+    /// The advert, then Recruitly's Client Brief under its own heading. The
+    /// brief is often fuller than the advert, so both go into the spec.
     pub description: Option<String>,
     pub location: Option<String>,
     pub pay: Option<String>,
@@ -543,7 +545,10 @@ fn job(v: &Value) -> Option<Job> {
         company_name: hit.company,
         // The full description when Recruitly holds one, else the short one.
         // The internal description is left out: it is for the team, not a spec.
-        description: text(v, "description").or_else(|| text(v, "shortDescription")),
+        description: with_brief(
+            text(v, "description").or_else(|| text(v, "shortDescription")),
+            text(v, "clientBrief"),
+        ),
         location: hit.location,
         pay,
         experience: text(v, "experienceLevelName"),
@@ -554,6 +559,15 @@ fn job(v: &Value) -> Option<Job> {
             .unwrap_or(false),
         skills,
     })
+}
+
+/// The advert followed by the Client Brief, each as Recruitly holds it.
+fn with_brief(advert: Option<String>, brief: Option<String>) -> Option<String> {
+    match (advert, brief) {
+        (Some(a), Some(b)) => Some(format!("{a}\n\nClient brief:\n\n{b}")),
+        (None, Some(b)) => Some(format!("Client brief:\n\n{b}")),
+        (a, None) => a,
+    }
 }
 
 fn candidate_hit(v: &Value) -> Option<CandidateHit> {
@@ -728,6 +742,19 @@ mod tests {
             "remoteWorking": true, "skills": ["AWS", "IAM", ""]});
         let j = job(&live).unwrap();
         assert_eq!(j.description.as_deref(), Some("Secure the cloud estate."));
+        // The Client Brief follows the advert, and reads as plain text.
+        let briefed = json!({"id": "j3", "title": "T", "shortDescription": "Secure the cloud.",
+            "clientBrief": "<h2>Must have</h2><ul><li>IAM</li><li>Okta</li></ul>"});
+        let d = job(&briefed).unwrap().description.unwrap();
+        assert_eq!(
+            plain_text(&d),
+            "Secure the cloud.\n\nClient brief:\n\nMust have\n\n- IAM\n- Okta"
+        );
+        let only = json!({"id": "j4", "title": "T", "clientBrief": "<p>Notes</p>"});
+        assert_eq!(
+            plain_text(&job(&only).unwrap().description.unwrap()),
+            "Client brief:\n\nNotes"
+        );
         assert_eq!(j.pay.as_deref(), Some("180,000 to 200,000 USD per year"));
         assert_eq!(j.skills, ["AWS", "IAM"]);
         assert!(j.remote);
