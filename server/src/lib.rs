@@ -1,6 +1,7 @@
 //! Sourcer server: API, background worker and scheduler for resourcing and outreach.
 //! See docs/SRS.md for requirements and docs/README.md for the design.
 
+pub mod admin;
 pub mod ai;
 pub mod app;
 pub mod audit;

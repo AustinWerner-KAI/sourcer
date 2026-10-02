@@ -13,6 +13,7 @@ use tower_http::{
 };
 
 use crate::{
+    admin,
     ai::Claude,
     auth,
     auth::AuthConfig,
@@ -106,6 +107,15 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route(
             "/api/clients",
             get(roles::list_clients).post(roles::create_client),
+        )
+        .route("/api/clients/:id", patch(admin::update_client))
+        .route(
+            "/api/admin/controls",
+            get(admin::get_controls).put(admin::put_controls),
+        )
+        .route(
+            "/api/admin/do-not-contact",
+            get(admin::list_dnc).post(admin::add_dnc),
         )
         .route(
             "/api/roles",
