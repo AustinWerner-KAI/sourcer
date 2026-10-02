@@ -255,7 +255,7 @@ function Person({
         <Reach contacts={p.contacts} blocked={p.do_not_contact} />
         {tab !== "rejected" && ranked && <CvLine p={p} roleId={roleId} />}
         {recruitly && tab === "shortlisted" && <RecruitlyLine p={p} roleId={roleId} job={job} />}
-        {tab === "shortlisted" && <EmailLine p={p} roleId={roleId} />}
+        {["shortlisted", "drafted", "approved"].includes(p.state) && <EmailLine p={p} roleId={roleId} />}
       </div>
       <div className="acts">
         {tab === "review" && ranked && !rejecting && (
