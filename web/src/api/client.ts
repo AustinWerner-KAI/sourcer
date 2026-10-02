@@ -147,9 +147,13 @@ export const api = {
   },
 
   outreach: (candidacy: string) => get<OutreachView>(`/api/candidates/${candidacy}/outreach`),
-  /** Draft the three emails. `fresh` replaces an existing draft or a stopped sequence. */
-  draftOutreach: (candidacy: string, fresh = false) =>
-    send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach${fresh ? "?fresh=true" : ""}`, {}),
+  /** Draft the three emails. With `version`, start again over that draft (refused if it changed since). */
+  draftOutreach: (candidacy: string, version?: number) =>
+    send<OutreachView>(
+      "POST",
+      `/api/candidates/${candidacy}/outreach${version === undefined ? "" : `?fresh=true&version=${version}`}`,
+      {},
+    ),
   saveOutreach: (candidacy: string, version: number, steps: OutreachStepEdit[]) =>
     send<OutreachView>("PUT", `/api/candidates/${candidacy}/outreach`, { version, steps }),
   /** One approval for all three emails. Nothing is sent until Outlook is connected. */
