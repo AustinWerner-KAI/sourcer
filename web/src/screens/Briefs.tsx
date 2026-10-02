@@ -10,9 +10,27 @@ const briefLabel: Record<string, string> = {
   confirmed: "Confirmed",
 };
 
-/** Every role, newest first: where its brief is, and a way into its candidates. */
+/** Every role, newest first: open ones by default, closed ones a tap away. */
 export function Briefs() {
+  const queryClient = useQueryClient();
   const roles = useQuery({ queryKey: ["roles"], queryFn: api.roles });
+  const [tab, setTab] = useState<"open" | "closed">("open");
+  // The role whose Close is waiting for a second tap.
+  const [asking, setAsking] = useState<string | null>(null);
+  const close = useMutation({
+    mutationFn: ({ id, closed }: { id: string; closed: boolean }) => api.closeRole(id, closed),
+    onSuccess: (rows, { id }) => {
+      queryClient.setQueryData(["roles"], rows);
+      queryClient.invalidateQueries({ queryKey: ["role", id] });
+      queryClient.invalidateQueries({ queryKey: ["search", id] });
+      queryClient.invalidateQueries({ queryKey: ["today"] });
+      setAsking(null);
+    },
+  });
+  const all = roles.data ?? [];
+  const open = all.filter((r) => !r.closed);
+  const closed = all.filter((r) => r.closed);
+  const shown = tab === "open" ? open : closed;
 
   return (
     <main>
@@ -28,10 +46,36 @@ export function Briefs() {
       <section className="panel">
         {roles.isLoading && <p className="panel-note">Loading</p>}
         {roles.isError && <p className="form-error">Could not load roles. Please refresh.</p>}
-        {roles.data && roles.data.length === 0 && (
+        {roles.data && all.length === 0 && (
           <p>No roles yet. Add one with its job spec, and Claude drafts the brief for you to check.</p>
         )}
-        {roles.data && roles.data.length > 0 && (
+        {all.length > 0 && (
+          <span className="seg pick role-tabs" role="tablist" aria-label="Which roles">
+            {(
+              [
+                ["open", `Open (${open.length})`],
+                ["closed", `Closed (${closed.length})`],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={tab === k}
+                className={tab === k ? "sel" : undefined}
+                onClick={() => {
+                  setTab(k);
+                  setAsking(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
+        {all.length > 0 && shown.length === 0 && (
+          <p className="note">{tab === "open" ? "No open roles." : "No closed roles."}</p>
+        )}
+        {shown.length > 0 && (
           <table className="team roles">
             <thead>
               <tr>
@@ -42,7 +86,7 @@ export function Briefs() {
               </tr>
             </thead>
             <tbody>
-              {roles.data.map((r) => (
+              {shown.map((r) => (
                 <tr key={r.id}>
                   <td>
                     <Link to={`/roles/${r.id}`}>{r.title}</Link>
@@ -54,16 +98,58 @@ export function Briefs() {
                     </span>
                   </td>
                   <td className="actions">
-                    {r.brief_state === "confirmed" ? (
-                      <Link to={`/roles/${r.id}/candidates`}>Candidates</Link>
+                    {asking === r.id ? (
+                      <span className="ask-close" role="group" aria-label={`Close ${r.title}`}>
+                        <span className="note">
+                          {r.active_sequences > 0
+                            ? `Stops ${r.active_sequences} email sequence${r.active_sequences === 1 ? "" : "s"} still going.`
+                            : "No more searching or emails."}
+                        </span>
+                        <button className="link-button" onClick={() => setAsking(null)}>
+                          Keep open
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() => close.mutate({ id: r.id, closed: true })}
+                          disabled={close.isPending}
+                        >
+                          Close role
+                        </button>
+                      </span>
                     ) : (
-                      <Link to={`/roles/${r.id}/brief`}>Check the brief</Link>
+                      <span className="row-acts">
+                        {r.closed ? (
+                          <button
+                            className="link-button"
+                            onClick={() => close.mutate({ id: r.id, closed: false })}
+                            disabled={close.isPending}
+                          >
+                            Reopen
+                          </button>
+                        ) : (
+                          <>
+                            {r.brief_state === "confirmed" ? (
+                              <Link to={`/roles/${r.id}/candidates`}>Candidates</Link>
+                            ) : (
+                              <Link to={`/roles/${r.id}/brief`}>Check the brief</Link>
+                            )}
+                            <button className="link-button quiet" onClick={() => setAsking(r.id)}>
+                              Close
+                            </button>
+                          </>
+                        )}
+                      </span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {close.error && (
+          <p className="form-error" role="alert">
+            {close.error.message}
+          </p>
         )}
       </section>
     </main>

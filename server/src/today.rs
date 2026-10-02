@@ -116,6 +116,7 @@ pub async fn today(State(state): State<AppState>, user: CurrentUser) -> Response
              JOIN person p ON p.id = c.person_id
              JOIN role r ON r.id = c.role_id
              WHERE o.org_id = $1 AND o.sender_id = $2 AND o.status = 'draft'
+               AND r.closed_at IS NULL
              ORDER BY o.updated_at DESC LIMIT $3",
         )
         .bind(user.org_id)
@@ -136,6 +137,7 @@ pub async fn today(State(state): State<AppState>, user: CurrentUser) -> Response
                            ORDER BY step LIMIT 1) n ON true
              LEFT JOIN outreach_step b ON b.outreach_id = o.id AND b.step = n.step - 1
              WHERE o.org_id = $1 AND o.sender_id = $2 AND o.status IN ('approved', 'active')
+               AND r.closed_at IS NULL
              ORDER BY 7 NULLS FIRST, o.approved_at LIMIT $3",
         )
         .bind(user.org_id)

@@ -184,3 +184,11 @@ Mockup only, nothing built. Measured with Playwright at 1440 and 390.
 - The count panel then shows "Before tightening: 26,783."
 - Server checks, so a reply can only narrow and only from the spec: the quote must be in the spec (12 characters or more) and name the tool, domain or number it backs; cities must be named in the spec; a second Must domain is refused (Must domains are any one of, so it would widen); every list keeps one entry; leave-out list, excluded titles and must-haves never change; each change must stand on its own so any can be unticked.
 - Measured at 390: checkboxes rows, Not now and the main button 44px or taller; no sideways scroll.
+
+## Built: Open and closed roles (2 Oct 2026, PR after #34)
+
+- Roles list: "Open (n) | Closed (n)" tabs, open by default. Each open role has a quiet "Close"; it asks once in the row ("Stops 3 email sequences still going." or "No more searching or emails.", Keep open / Close role). Closed roles show "Reopen".
+- A closed role: Search shows "This role is closed. Reopen it on the Roles page to search again." and every count and pull is refused; approval is refused and every email still due stops at its check before sending ("This role is closed."); Today hides its drafts to approve and emails going out. Replies are still read and shown.
+- Reopening allows searching and new approvals again; sequences already stopped stay stopped.
+- Phones: role rows become cards (title, client and brief, then actions); every control 44px or taller; no sideways scroll. This also fixes the Roles table running off the side on phones.
+- Known edge: a pull already queued when the role is closed still runs.

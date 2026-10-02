@@ -17,6 +17,8 @@ pub mod action {
     pub const CLIENT_CREATED: &str = "client.create";
     pub const ROLE_CREATED: &str = "role.create";
     pub const ROLE_CLIENT_SET: &str = "role.client_set";
+    pub const ROLE_CLOSED: &str = "role.close";
+    pub const ROLE_REOPENED: &str = "role.reopen";
     pub const BRIEF_DRAFTED: &str = "brief.draft";
     pub const BRIEF_SAVED: &str = "brief.save";
     pub const BRIEF_CONFIRMED: &str = "brief.confirm";

@@ -271,6 +271,19 @@ pub struct RoleSummary {
     pub client_name: Option<String>,
     /// "none", "draft" or "confirmed".
     pub brief_state: String,
+    /// Closed: no searching, no more emails.
+    pub closed: bool,
+    /// Email sequences approved and still going, which closing would stop.
+    #[ts(type = "number")]
+    pub active_sequences: i64,
+}
+
+/// POST /api/roles/:id/close
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct CloseRole {
+    /// True to close, false to reopen.
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -287,6 +300,8 @@ pub struct RoleDetail {
     pub locked_out: Vec<LockedOut>,
     /// The Recruitly job this role came from or is linked to.
     pub recruitly_job: Option<RecruitlyLink>,
+    /// Closed: no searching, no more emails.
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

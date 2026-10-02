@@ -134,6 +134,7 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/brief/confirm", post(roles::confirm_brief))
         .route("/api/roles/:id/search", get(searching::get_search))
         .route("/api/roles/:id/search/count", post(searching::count))
+        .route("/api/roles/:id/close", post(roles::close_role))
         .route("/api/roles/:id/search/tighten", post(tighten::ask))
         .route(
             "/api/roles/:id/search/tighten/apply",

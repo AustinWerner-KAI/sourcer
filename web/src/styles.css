@@ -504,3 +504,22 @@ ul.today .form-error { margin: 8px 0 0; }
   .r3 .link-button { min-height: 44px; }
 }
 
+/* Roles: open and closed. */
+.role-tabs { margin-bottom: 14px; }
+.roles .row-acts { display: inline-flex; gap: 16px; align-items: center; justify-content: flex-end; }
+.roles .link-button.quiet { color: var(--muted); }
+.roles .ask-close { display: inline-flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: flex-end; }
+.roles .ask-close .note { margin: 0; }
+@media (max-width: 768px) {
+  .seg.pick.role-tabs button, .roles .row-acts a, .roles .link-button, .roles .ask-close .btn-ghost { min-height: 44px; display: inline-flex; align-items: center; }
+  /* Each role becomes a card: title, then client and brief, then actions. */
+  .team.roles thead { display: none; }
+  .team.roles, .team.roles tbody, .team.roles tr, .team.roles td { display: block; width: 100%; }
+  .team.roles tr { padding: 12px 0; border-top: 1px solid var(--line); }
+  .team.roles td { padding: 2px 0; border: 0; text-align: left; }
+  .team.roles td:nth-child(2), .team.roles td:nth-child(3) { display: inline-block; width: auto; margin-right: 12px; color: var(--text-2); }
+  .team.roles .actions { text-align: left; }
+  .team.roles td:first-child a { display: block; padding: 12px 0; min-height: 44px; font-weight: 600; }
+  .roles .row-acts, .roles .ask-close { justify-content: flex-start; }
+}
+
