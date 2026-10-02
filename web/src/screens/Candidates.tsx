@@ -83,7 +83,7 @@ export function Candidates() {
           <div className="eyebrow">{r.client?.name ?? "Role"}</div>
           <h1>{r.title}</h1>
         </header>
-        <Steps at={4} />
+        <Steps at={3} roleId={id} />
       </div>
 
       <section className="panel">
@@ -169,7 +169,7 @@ function Empty({ tab, roleId }: { tab: CandidateTab; roleId: string }) {
   if (tab === "rejected") return <p className="panel-note">No one rejected yet.</p>;
   return (
     <p className="panel-note">
-      No one to review. <Link to={`/brief/${roleId}/search`}>Go to search</Link> to find people.
+      No one to review. <Link to={`/roles/${roleId}/search`}>Go to search</Link> to find people.
     </p>
   );
 }
