@@ -7,6 +7,7 @@ import type { OutreachView } from "../api/types/OutreachView";
 import type { OutreachStepEdit } from "../api/types/OutreachStepEdit";
 
 const WHEN = ["First email", "Follow-up", "Final email"];
+const REPLY_LABEL: Record<string, string> = { reply: "a reply", auto: "an automatic reply", bounce: "a bounce" };
 
 const when = (step: number, delay: number) =>
   step === 1 ? "Sent first" : `${delay} day${delay === 1 ? "" : "s"} after the last, if no reply`;
@@ -25,15 +26,23 @@ export function EmailLine({ p, roleId }: { p: CandidateRow; roleId: string }) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["candidates", roleId] }),
   });
 
+  const es = p.email_status;
   let flag;
-  if (p.do_not_contact) flag = <span className="flag stop">Do not email</span>;
-  else if (p.state === "approved") flag = <span className="flag sent">Emails approved · waiting for Outlook</span>;
-  else if (p.state === "drafted") flag = <span className="flag emp">Emails drafted, not approved</span>;
+  if (es === "reply") flag = <span className="flag sent">Replied</span>;
+  else if (es === "auto") flag = <span className="flag emp">Automatic reply · emails stopped</span>;
+  else if (es === "bounce") flag = <span className="flag stop">Bounced · the address did not work</span>;
+  else if (p.do_not_contact) flag = <span className="flag stop">Do not email</span>;
+  else if (es === "active") flag = <span className="flag sent">Emails going out</span>;
+  else if (es === "done") flag = <span className="flag rc">3 emails sent, no reply</span>;
+  else if (es === "stopped") flag = <span className="flag emp">Emails stopped</span>;
+  else if (es === "approved") flag = <span className="flag sent">Emails approved · waiting to go out</span>;
+  else if (es === "draft") flag = <span className="flag emp">Emails drafted, not approved</span>;
   else if (!personal) flag = <span className="flag rc">No personal email, so no email</span>;
   else flag = <span className="flag rc">No emails yet</span>;
 
   const canDraft = p.state === "shortlisted" && personal && !p.do_not_contact;
-  const hasDraft = p.state === "drafted" || p.state === "approved";
+  const hasDraft =
+    ["drafted", "approved", "contacted", "replied", "no_reply"].includes(p.state) || es === "stopped";
 
   return (
     <div className="emline">
@@ -42,7 +51,7 @@ export function EmailLine({ p, roleId }: { p: CandidateRow; roleId: string }) {
         {flag}
         {hasDraft && (
           <button type="button" className="link-button" onClick={() => setOpen(!open)} aria-expanded={open}>
-            {open ? "Close" : p.state === "drafted" ? "Review" : "View"}
+            {open ? "Close" : es === "draft" ? "Review" : "View"}
           </button>
         )}
       </div>
@@ -123,7 +132,9 @@ function Sequence({ id, roleId, onClosed }: { id: string; roleId: string; onClos
           <div className="mail" key={s.step}>
             <div className="mailhead">
               <span className="n">{WHEN[s.step - 1]}</span>
-              <span className="d">{s.sent_at ? `Sent ${s.sent_at}` : when(s.step, s.delay_days)}</span>
+              <span className="d">
+                {s.sent_at ? `Sent ${s.sent_at}` : s.due ? `Due ${s.due}, if no reply` : when(s.step, s.delay_days)}
+              </span>
             </div>
             {preview || !draft ? (
               <>
@@ -179,7 +190,22 @@ function Sequence({ id, roleId, onClosed }: { id: string; roleId: string; onClos
       )}
       {v.status === "approved" && (
         <p className="seqnote">
-          Approved {v.approved_at}. Nothing goes out until Outlook is connected. Any reply stops the rest.
+          {v.sending_ready
+            ? `Approved ${v.approved_at}. Goes out from ${v.sender}'s Outlook, Monday to Friday, 8:00 to 18:00 Dubai. Any reply stops the rest.`
+            : `Approved ${v.approved_at}. Nothing goes out until ${v.sender} connects Outlook in Settings.`}
+        </p>
+      )}
+      {v.status === "active" && (
+        <p className="seqnote">
+          {v.sending_ready
+            ? "Going out. Any reply stops the rest."
+            : `Paused: ${v.sender}'s Outlook needs connecting in Settings.`}
+        </p>
+      )}
+      {v.status === "stopped" && v.stop_reason && <p className="seqnote stopped">Stopped: {v.stop_reason}</p>}
+      {v.status === "done" && (
+        <p className="seqnote">
+          All 3 sent.{v.reply_kind ? ` Then: ${REPLY_LABEL[v.reply_kind] ?? "a reply"}.` : " No reply yet."}
         </p>
       )}
       <div className="seqacts">

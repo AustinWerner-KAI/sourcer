@@ -28,6 +28,10 @@ approved_at: string | null,
  */
 version: number, 
 /**
- * The Outlook connection is set up, so approved emails will go out.
+ * The sender's Outlook is connected and working, so approved emails go out.
  */
-sending_ready: boolean, };
+sending_ready: boolean, 
+/**
+ * "reply", "auto" (an automatic reply) or "bounce", once one arrives.
+ */
+reply_kind: string | null, };

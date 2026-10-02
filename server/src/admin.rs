@@ -42,6 +42,8 @@ pub struct Controls {
     pub sending_paused: bool,
     /// No paid call (search, ranking, CV assessment) is made while this is on.
     pub paid_calls_paused: bool,
+    /// First emails each person may send in one Dubai day (0 to 200).
+    pub first_emails_per_day: i32,
 }
 
 /// GET /api/admin/controls
@@ -49,37 +51,67 @@ pub async fn get_controls(State(state): State<AppState>, Admin(user): Admin) -> 
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let row: Result<(bool, bool), _> =
-        sqlx::query_as("SELECT sending_paused, paid_calls_paused FROM org WHERE id = $1")
-            .bind(user.org_id)
-            .fetch_one(pool)
-            .await;
+    let row: Result<(bool, bool, i32), _> = sqlx::query_as(
+        "SELECT sending_paused, paid_calls_paused, first_emails_per_day FROM org WHERE id = $1",
+    )
+    .bind(user.org_id)
+    .fetch_one(pool)
+    .await;
     match row {
-        Ok((sending_paused, paid_calls_paused)) => Json(Controls {
+        Ok((sending_paused, paid_calls_paused, first_emails_per_day)) => Json(Controls {
             sending_paused,
             paid_calls_paused,
+            first_emails_per_day,
         })
         .into_response(),
         Err(e) => server_error(e),
     }
 }
 
-/// PUT /api/admin/controls
+/// Only the switches being changed, so two admins never undo each other.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct ControlsChange {
+    #[ts(optional)]
+    pub sending_paused: Option<bool>,
+    #[ts(optional)]
+    pub paid_calls_paused: Option<bool>,
+    #[ts(optional)]
+    pub first_emails_per_day: Option<i32>,
+}
+
+/// PUT /api/admin/controls: change one or more switches.
 pub async fn put_controls(
     State(state): State<AppState>,
     Admin(user): Admin,
-    Json(c): Json<Controls>,
+    Json(c): Json<ControlsChange>,
 ) -> Response {
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    if c.first_emails_per_day
+        .is_some_and(|n| !(0..=200).contains(&n))
+    {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "First emails a day must be between 0 and 200.",
+        );
+    }
     let result = async {
         let mut tx = pool.begin().await?;
-        sqlx::query("UPDATE org SET sending_paused = $2, paid_calls_paused = $3 WHERE id = $1")
+        let (sending_paused, paid_calls_paused, first_emails_per_day): (bool, bool, i32) =
+            sqlx::query_as(
+                "UPDATE org SET sending_paused = coalesce($2, sending_paused),
+                        paid_calls_paused = coalesce($3, paid_calls_paused),
+                        first_emails_per_day = coalesce($4, first_emails_per_day)
+                 WHERE id = $1
+                 RETURNING sending_paused, paid_calls_paused, first_emails_per_day",
+            )
             .bind(user.org_id)
             .bind(c.sending_paused)
             .bind(c.paid_calls_paused)
-            .execute(&mut *tx)
+            .bind(c.first_emails_per_day)
+            .fetch_one(&mut *tx)
             .await?;
         audit::record(
             &mut *tx,
@@ -87,17 +119,20 @@ pub async fn put_controls(
             Some(user.id),
             audit::action::CONTROLS_SET,
             &format!(
-                "sending_paused:{} paid_calls_paused:{}",
-                c.sending_paused, c.paid_calls_paused
+                "sending_paused:{sending_paused} paid_calls_paused:{paid_calls_paused} first_emails_per_day:{first_emails_per_day}"
             ),
         )
         .await?;
         tx.commit().await?;
-        anyhow::Ok(())
+        anyhow::Ok(Controls {
+            sending_paused,
+            paid_calls_paused,
+            first_emails_per_day,
+        })
     }
     .await;
     match result {
-        Ok(()) => Json(c).into_response(),
+        Ok(c) => Json(c).into_response(),
         Err(e) => server_error(e),
     }
 }

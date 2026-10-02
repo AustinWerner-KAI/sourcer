@@ -17,25 +17,49 @@ async fn admins_pause_sending_and_paid_calls() {
     let v = json_body(send(&app, get_req("/api/admin/controls", Some(&admin))).await).await;
     assert_eq!(
         v,
-        json!({"sending_paused": false, "paid_calls_paused": false})
+        json!({"sending_paused": false, "paid_calls_paused": false, "first_emails_per_day": 25})
     );
 
-    let on = json!({"sending_paused": true, "paid_calls_paused": true});
+    let on = json!({"sending_paused": true, "paid_calls_paused": true, "first_emails_per_day": 10});
     let res = send(
         &app,
         json_req("PUT", "/api/admin/controls", &me, on.clone()),
     )
     .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let too_many =
+        json!({"sending_paused": true, "paid_calls_paused": true, "first_emails_per_day": 500});
+    let res = send(
+        &app,
+        json_req("PUT", "/api/admin/controls", &admin, too_many),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let res = send(&app, json_req("PUT", "/api/admin/controls", &admin, on)).await;
     assert_eq!(res.status(), StatusCode::OK);
-    let (s, p): (bool, bool) =
-        sqlx::query_as("SELECT sending_paused, paid_calls_paused FROM org WHERE id = $1")
-            .bind(org)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(s && p);
+    // A change to one switch leaves the others as they are.
+    let res = send(
+        &app,
+        json_req(
+            "PUT",
+            "/api/admin/controls",
+            &admin,
+            json!({"paid_calls_paused": false}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        json_body(res).await,
+        json!({"sending_paused": true, "paid_calls_paused": false, "first_emails_per_day": 10})
+    );
+    let (s, p, n): (bool, bool, i32) = sqlx::query_as(
+        "SELECT sending_paused, paid_calls_paused, first_emails_per_day FROM org WHERE id = $1",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(s && !p && n == 10);
     let audited: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'org.controls'",
     )
@@ -43,7 +67,7 @@ async fn admins_pause_sending_and_paid_calls() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(audited, 1);
+    assert_eq!(audited, 2);
 }
 
 #[tokio::test]

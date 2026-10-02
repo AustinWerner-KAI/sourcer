@@ -14,6 +14,7 @@ pub mod db;
 pub mod domain;
 pub mod employer;
 pub mod jobs;
+pub mod mail;
 pub mod outreach;
 pub mod people;
 pub mod plan;
@@ -24,8 +25,10 @@ pub mod retune;
 pub mod roles;
 pub mod search;
 pub mod searching;
+pub mod sending;
 pub mod sources;
 pub mod team;
+pub mod today;
 pub mod worker;
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ export function AdminLayout() {
   );
 }
 
-/** Admin › Controls: the two kill switches, then the Recruitly connection. */
+/** Admin › Controls: the two kill switches, the daily email limit, then the Recruitly connection. */
 export function Controls() {
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["controls"], queryFn: api.controls });
@@ -44,7 +44,7 @@ export function Controls() {
     mutationFn: api.saveControls,
     onSuccess: (c) => queryClient.setQueryData(["controls"], c),
   });
-  const set = (change: Partial<ControlsT>) => q.data && save.mutate({ ...q.data, ...change });
+  const set = (change: Partial<ControlsT>) => save.mutate(change);
 
   return (
     <>
@@ -75,6 +75,12 @@ export function Controls() {
               busy={save.isPending}
               onChange={(running) => set({ paid_calls_paused: !running })}
             />
+            <DailyLimit
+              key={q.data.first_emails_per_day}
+              value={q.data.first_emails_per_day}
+              busy={save.isPending}
+              onSave={(n) => set({ first_emails_per_day: n })}
+            />
           </div>
         )}
         {save.error && (
@@ -85,6 +91,42 @@ export function Controls() {
       </section>
       <RecruitlyPanel />
     </>
+  );
+}
+
+/** First emails each person may send in a day. Follow-ups never count. */
+function DailyLimit({ value, busy, onSave }: { value: number; busy: boolean; onSave: (n: number) => void }) {
+  const [n, setN] = useState(String(value));
+  const parsed = Number(n);
+  const ok = n.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= 200;
+  return (
+    <form
+      className="switch"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok) onSave(parsed);
+      }}
+    >
+      <div>
+        <div className="sw-title">First emails a day</div>
+        <p className="sw-note">Per person, Monday to Friday. Follow-ups do not count. Fewer is safer for your mailbox.</p>
+      </div>
+      <span className="limit">
+        <input
+          className="in"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={200}
+          aria-label="First emails a day, per person"
+          value={n}
+          onChange={(e) => setN(e.target.value)}
+        />
+        <button type="submit" className="btn-ghost" disabled={busy || !ok || parsed === value}>
+          Save
+        </button>
+      </span>
+    </form>
   );
 }
 

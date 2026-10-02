@@ -8,6 +8,7 @@ import { BriefEditor } from "./screens/BriefEditor";
 import { Search } from "./screens/Search";
 import { Candidates } from "./screens/Candidates";
 import { Settings } from "./screens/Settings";
+import { Today } from "./screens/Today";
 import { AdminLayout, Clients, Controls, DoNotContact } from "./screens/Admin";
 
 /** A fresh editor per role, so edits on one role never carry to another. */
@@ -83,6 +84,7 @@ export function App() {
           <div className="brand-sub">Sourcer</div>
         </div>
         <div className="nav-links">
+          <NavLink to="/today">Today</NavLink>
           <NavLink to="/roles">Roles</NavLink>
         </div>
         <div className="nav-links util">
@@ -128,14 +130,15 @@ export function App() {
         </div>
       </nav>
       <Routes>
-        <Route path="/" element={<Navigate to="/roles" replace />} />
+        <Route path="/" element={<Navigate to="/today" replace />} />
+        <Route path="/today" element={<Today />} />
         <Route path="/roles" element={<Briefs />} />
         <Route path="/roles/new" element={<NewRole />} />
         <Route path="/roles/:id" element={<RoleHome />} />
         <Route path="/roles/:id/brief" element={<BriefEditorPage />} />
         <Route path="/roles/:id/search" element={<SearchPage />} />
         <Route path="/roles/:id/candidates" element={<CandidatesPage />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={<Settings isAdmin={isAdmin} />} />
         {isAdmin && (
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="/admin/team" replace />} />
@@ -152,7 +155,7 @@ export function App() {
         <Route path="/brief/:id/search" element={<Moved step="search" />} />
         <Route path="/brief/:id/candidates" element={<Moved step="candidates" />} />
         <Route path="/team" element={<Navigate to="/admin/team" replace />} />
-        <Route path="*" element={<Navigate to="/roles" replace />} />
+        <Route path="*" element={<Navigate to="/today" replace />} />
       </Routes>
     </div>
   );

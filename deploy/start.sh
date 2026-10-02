@@ -12,6 +12,12 @@ if ! grep -Eq '^POSTGRES_PASSWORD=.{16,}$' .env || grep -q '^POSTGRES_PASSWORD=c
   echo "Set POSTGRES_PASSWORD in deploy/.env to a long random value first." >&2
   exit 1
 fi
+# The key that encrypts Outlook connections: made once, kept in .env, never printed.
+if ! grep -Eq '^MAIL_TOKEN_KEY=.{40,}$' .env; then
+  sed -i.bak '/^MAIL_TOKEN_KEY=/d' .env && rm -f .env.bak
+  printf '\nMAIL_TOKEN_KEY=%s\n' "$(openssl rand -base64 32)" >> .env
+  echo "Created the Outlook encryption key in deploy/.env."
+fi
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Open Docker Desktop, wait for it to start, then run this again." >&2
   exit 1

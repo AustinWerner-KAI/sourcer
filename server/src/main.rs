@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use sourcer_server::{
-    ai, app, candidates::RankHandler, config::Config, db, recruitly::Recruitly,
-    searching::PullHandler, sources::pdl::PdlClient, worker::Worker,
+    ai, app, candidates::RankHandler, config::Config, db, mail::Mail, recruitly::Recruitly,
+    searching::PullHandler, sending::Sender, sources::pdl::PdlClient, worker::Worker,
 };
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
@@ -58,7 +58,17 @@ async fn main() -> anyhow::Result<()> {
             pool: pool.clone(),
             ai: ai.clone(),
         }));
-    let worker = tokio::spawn(worker.run(stopped));
+    let worker = tokio::spawn(worker.run(stopped.clone()));
+
+    // Each person's Outlook: sends approved emails and watches for replies.
+    let mail = Arc::new(Mail::new(config.mail()?));
+    let sender = tokio::spawn(
+        Sender {
+            pool: pool.clone(),
+            mail: mail.clone(),
+        }
+        .run(stopped),
+    );
 
     let addr: SocketAddr = config.bind_addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -72,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
     state.pdl = pdl;
     state.ai = ai;
     state.recruitly = recruitly;
+    state.mail = mail;
     let router = app::router_with_web(state, config.web_dir.as_deref());
     // Connection info lets the sign-in limit count attempts per address.
     axum::serve(
@@ -83,10 +94,29 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = stop.send(true);
     worker.await?;
+    sender.await?;
     Ok(())
 }
 
+/// Ctrl-C, or SIGTERM from Docker when it stops or updates the container.
 async fn shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term => {}
+    }
     tracing::info!("shutting down");
 }

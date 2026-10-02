@@ -8,4 +8,8 @@ sending_paused: boolean,
 /**
  * No paid call (search, ranking, CV assessment) is made while this is on.
  */
-paid_calls_paused: boolean, };
+paid_calls_paused: boolean, 
+/**
+ * First emails each person may send in one Dubai day (0 to 200).
+ */
+first_emails_per_day: number, };

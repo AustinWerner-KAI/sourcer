@@ -33,6 +33,9 @@ export const REASONS: { code: ReasonCode; label: string }[] = [
   { code: "KNOWN", label: "Already known" },
 ];
 
+/** States that have, or can have, an email line. */
+const EMAIL_STATES = ["shortlisted", "drafted", "approved", "contacted", "replied", "no_reply"];
+
 const reasonLabel = (code: ReasonCode | null) => REASONS.find((r) => r.code === code)?.label ?? code;
 
 const isTab = (t: string | null): t is CandidateTab => t === "review" || t === "shortlisted" || t === "rejected";
@@ -157,7 +160,7 @@ export function Candidates() {
         )}
       </section>
       <p className="later">
-        Nothing is sent to candidates from this screen.
+        Emails go out only after you approve them, from your own Outlook.
         {v.recruitly ? " Adding someone to Recruitly copies their record there; it sends them nothing." : ""}
       </p>
     </main>
@@ -255,7 +258,7 @@ function Person({
         <Reach contacts={p.contacts} blocked={p.do_not_contact} />
         {tab !== "rejected" && ranked && <CvLine p={p} roleId={roleId} />}
         {recruitly && tab === "shortlisted" && <RecruitlyLine p={p} roleId={roleId} job={job} />}
-        {["shortlisted", "drafted", "approved"].includes(p.state) && <EmailLine p={p} roleId={roleId} />}
+        {EMAIL_STATES.includes(p.state) && <EmailLine p={p} roleId={roleId} />}
       </div>
       <div className="acts">
         {tab === "review" && ranked && !rejecting && (
