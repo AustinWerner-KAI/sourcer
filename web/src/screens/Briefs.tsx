@@ -146,7 +146,7 @@ export function NewRole() {
         <h2 className="panel-title">The role</h2>
         <p className="panel-note">
           {useJob
-            ? "Pick the job in Recruitly. Its title, client and spec fill the form for you to check. Nothing is spent until you confirm the brief."
+            ? "Pick the job in Recruitly. Its title, client, spec and Client Brief fill the form for you to check. Nothing is spent until you confirm the brief."
             : "Paste the client's spec. Nothing is spent until you confirm the brief."}
         </p>
         {recruitly.data?.configured && (

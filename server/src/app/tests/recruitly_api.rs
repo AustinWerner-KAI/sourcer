@@ -76,6 +76,7 @@ async fn fake_recruitly(f: Arc<FakeRc>) -> String {
                     ("GET", ["jobs", "j1"]) => ok(json!({"id": "j1", "title": "Senior IAM Engineer",
                         "reference": "J-1042", "companyId": "co1", "companyName": "Client R",
                         "description": "<p>Lead <b>IAM</b> &amp; PAM.</p>", "location": "Dubai",
+                        "clientBrief": "<h2>Call notes</h2><p>Must know <strong>CyberArk</strong>.</p>",
                         "minPay": 30000, "maxPay": 40000, "payCurrency": "AED"})),
                     ("GET", ["jobs", "j2"]) => ok(json!({"id": "j2", "title": "Platform Lead",
                         "companyId": "co2", "companyName": "Other Co"})),
@@ -202,7 +203,7 @@ async fn a_role_starts_from_a_recruitly_job_with_its_client_and_spec() {
     );
     assert_eq!(
         p["spec_text"],
-        "Lead IAM & PAM.\n\nLocation: Dubai\nPay: 30,000 to 40,000 AED\nRecruitly job: J-1042"
+        "Lead IAM & PAM.\n\nClient brief:\n\nCall notes\n\nMust know CyberArk.\n\nLocation: Dubai\nPay: 30,000 to 40,000 AED\nRecruitly job: J-1042"
     );
     let nothing: i64 = sqlx::query_scalar("SELECT count(*) FROM role WHERE org_id = $1")
         .bind(org)
