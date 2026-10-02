@@ -1,35 +1,35 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, SignedOut } from "../api/client";
+import { api, keepKey, SignedOut } from "../api/client";
 import type { BriefLines } from "../api/types/BriefLines";
 import type { CountLocation } from "../api/types/CountLocation";
 import type { LockedOut } from "../api/types/LockedOut";
 import type { PullView } from "../api/types/PullView";
-import type { RetuneView } from "../api/types/RetuneView";
 import type { SearchState } from "../api/types/SearchState";
 import { Steps } from "./Briefs";
+import { MoreSearches } from "./MoreSearches";
 
 /** Pulls bigger than this ask for a second click (the server checks too). */
 const CONFIRM_ABOVE = 50;
 const SIZES = [25, 50, 100];
 /** Most one location can pull in one go. */
 const MAX_PULL = 100;
-/** Fewer people than this in total, and Claude offers a round 2. */
-const FEW = 25;
+/** Fewer people than this in total, and the brief's search is called thin. */
+export const FEW = 25;
 
 /**
  * One key per intent: a resend after a lost reply reuses it, so the server
  * returns the first result instead of charging again. Cleared once the server
  * has answered, success or refusal.
  */
-function useIntentKey() {
+export function useIntentKey() {
   const key = useRef<string | null>(null);
   return {
     get: () => (key.current ??= newKey()),
-    // Network failures keep the key; any answer from the server clears it.
+    // A dropped request, or one the server is still working on, keeps the key.
     settle: (e?: unknown) => {
-      if (!(e instanceof TypeError)) key.current = null;
+      if (!keepKey(e)) key.current = null;
     },
   };
 }
@@ -40,7 +40,7 @@ function newKey() {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function ago(seconds: number) {
+export function ago(seconds: number) {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - seconds) / 60));
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
@@ -70,7 +70,8 @@ export function Search() {
     queryFn: () => api.search(id),
     retry: (n, e) => !(e instanceof SignedOut) && n < 2,
     // Poll while a pull is running in the background.
-    refetchInterval: (q) => (q.state.data?.pull && !q.state.data.pull.done ? 2000 : false),
+    refetchInterval: (q) =>
+      q.state.data?.pulling || (q.state.data?.pull && !q.state.data.pull.done) ? 2000 : false,
   });
   const [picks, setPicks] = useState<Record<string, number>>({});
   const [confirming, setConfirming] = useState(false);
@@ -92,41 +93,6 @@ export function Search() {
   const settle = (s: SearchState) => queryClient.setQueryData(["search", id], s);
   const countKey = useIntentKey();
   const pullKey = useIntentKey();
-  const agreeKey = useIntentKey();
-  const navigate = useNavigate();
-  // Round 2: Claude's proposal. Asking is free; nothing is searched until agreed.
-  const ask = useMutation({ mutationFn: () => api.retune(id) });
-  // The version a round 2 was confirmed as, so a retry after a failed count
-  // does not confirm twice.
-  const confirmedFrom = useRef<number | null>(null);
-  const agree = useMutation({
-    mutationFn: async (p: RetuneView) => {
-      if (confirmedFrom.current !== p.based_on) {
-        await api.confirmBrief(id, p.lines, p.based_on);
-        confirmedFrom.current = p.based_on;
-        queryClient.invalidateQueries({ queryKey: ["role", id] });
-      }
-      return api.countMatches(id, agreeKey.get());
-    },
-    onSuccess: (s) => {
-      agreeKey.settle();
-      settle(s);
-      ask.reset();
-    },
-    onError: (e) => agreeKey.settle(e),
-  });
-  // A proposal belongs to the count it read; a new count clears it.
-  useEffect(() => {
-    ask.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countId]);
-  const editMyself = useMutation({
-    mutationFn: (p: RetuneView) => api.saveBrief(id, p.lines),
-    onSuccess: (d) => {
-      queryClient.setQueryData(["role", id], d);
-      navigate(`/roles/${id}/brief`);
-    },
-  });
   const count = useMutation({
     mutationFn: () => api.countMatches(id, countKey.get()),
     onSuccess: (s) => {
@@ -159,10 +125,10 @@ export function Search() {
   const s = search.data;
   const r = role.data;
   const lines = s.lines;
-  const busy = count.isPending || pull.isPending || agree.isPending;
+  const busy = count.isPending || pull.isPending;
   const requested = Object.values(picks).reduce((a, b) => a + b, 0);
-  const running = s.pull && !s.pull.done;
-  const alreadyPulled = !!s.count && s.pull?.count_id === s.count.id;
+  const running = s.pulling || (!!s.pull && !s.pull.done);
+  const alreadyPulled = !!s.count?.pulled;
 
   const credits = s.locations.length;
   const creditWord = `${credits} credit${credits === 1 ? "" : "s"}`;
@@ -179,9 +145,6 @@ export function Search() {
   const pressPull = () => (requested > CONFIRM_ABOVE ? setConfirming(true) : pull.mutate());
   const people = `${requested} ${requested === 1 ? "person" : "people"}`;
   const found = s.count ? s.count.locations.reduce((a, c) => a + c.total, 0) : 0;
-  // Offer a round 2 on a current count that found too few, before any pull.
-  const offerRoundTwo =
-    !!s.count && !s.count.stale && !alreadyPulled && found < FEW && !s.unconfirmed_edits && !running;
 
   return (
     <main>
@@ -339,42 +302,8 @@ export function Search() {
           </section>
         )}
 
-        {offerRoundTwo && !ask.data && (
-          <section className="panel full r2">
-            <h2 className="panel-title">
-              {found === 0 ? "No one found. Try round 2" : `Only ${found} found. Try round 2`}
-            </h2>
-            <p>
-              Claude reads this brief and the counts, says why so few were found, and suggests what to relax. Nothing is
-              saved or searched until you agree.
-            </p>
-            {ask.isPending && (
-              <p className="note" role="status">
-                Claude is reading the search. This can take a minute.
-              </p>
-            )}
-            <div className="bar r2-bar">
-              <span className="total">
-                Asking uses <strong>no search credits</strong>.
-              </span>
-              <button className="btn-primary btn-inline" onClick={() => ask.mutate()} disabled={ask.isPending}>
-                {ask.isPending ? "Claude is reading" : "Ask Claude why"}
-              </button>
-            </div>
-            {ask.error && <ErrorLine e={ask.error} />}
-          </section>
-        )}
-        {offerRoundTwo && ask.data && (
-          <RoundTwo
-            p={ask.data}
-            busy={busy || editMyself.isPending}
-            blocked={!!s.blocked}
-            agreeing={agree.isPending}
-            onAgree={() => agree.mutate(ask.data)}
-            onEdit={() => editMyself.mutate(ask.data)}
-            onDismiss={() => ask.reset()}
-            error={agree.error ?? editMyself.error}
-          />
+        {s.count && !s.count.stale && s.lines && (
+          <MoreSearches roleId={id} s={s} lines={s.lines} found={found} running={running} onState={settle} />
         )}
 
         {s.pull && <PullResult p={s.pull} roleId={id} />}
@@ -383,7 +312,7 @@ export function Search() {
   );
 }
 
-function ErrorLine({ e }: { e: Error }) {
+export function ErrorLine({ e }: { e: Error }) {
   return (
     <p className="form-error" role="alert">
       {e.message}
@@ -527,72 +456,6 @@ function CountRow({
   );
 }
 
-/** Claude's round 2: why so few, what it would relax, and the choice. */
-function RoundTwo({
-  p,
-  busy,
-  blocked,
-  agreeing,
-  onAgree,
-  onEdit,
-  onDismiss,
-  error,
-}: {
-  p: RetuneView;
-  busy: boolean;
-  blocked: boolean;
-  agreeing: boolean;
-  onAgree: () => void;
-  onEdit: () => void;
-  onDismiss: () => void;
-  error: Error | null;
-}) {
-  const searches = Math.max(1, p.lines.locations.length);
-  const creditWord = `${searches} credit${searches === 1 ? "" : "s"}`;
-  return (
-    <section className="panel full r2" aria-labelledby="r2-title">
-      <h2 className="panel-title" id="r2-title">
-        Round 2 from Claude
-      </h2>
-      <div className="read">
-        <div className="lbl">Why so few</div>
-        <p>{p.diagnosis}</p>
-      </div>
-      <div className="lbl">What changes</div>
-      <ul className="r2-list">
-        {p.changes.map((c) => (
-          <li key={c.line} className="r2-row">
-            <span className="k">{c.line}</span>
-            <span>
-              <span className="now">{c.after}</span>
-              <span className="was">was {c.before}</span>
-            </span>
-            {c.reason && <span className="rsn">{c.reason}</span>}
-          </li>
-        ))}
-      </ul>
-      <p className="note">Everything relaxed still counts when Claude ranks the people found.</p>
-      <div className="bar r2-bar">
-        <span className="total">
-          Agreeing confirms this as brief version {p.based_on + 1} and counts it.
-        </span>
-        <span className="actions-row">
-          <button className="link-button" onClick={onDismiss} disabled={busy}>
-            Not now
-          </button>
-          <button className="btn-ghost" onClick={onEdit} disabled={busy}>
-            Edit it myself
-          </button>
-          <button className="btn-primary btn-inline" onClick={onAgree} disabled={busy || blocked}>
-            {agreeing ? "Counting" : `Agree and count · ${creditWord}`}
-          </button>
-        </span>
-      </div>
-      {error && <ErrorLine e={error} />}
-    </section>
-  );
-}
-
 function PullResult({ p, roleId }: { p: PullView; roleId: string }) {
   if (!p.done) {
     const pct = Math.round((100 * p.locations_done) / Math.max(1, p.locations));
@@ -613,7 +476,7 @@ function PullResult({ p, roleId }: { p: PullView; roleId: string }) {
   }
   return (
     <section className="panel full">
-      <h2 className="panel-title">Search done</h2>
+      <h2 className="panel-title">{p.search_name ? `${p.search_name}: search done` : "Search done"}</h2>
       {p.failed && <Failed p={p} />}
       <div className="stats">
         <div className="stat">
@@ -661,7 +524,7 @@ function Failed({ p }: { p: PullView }) {
           ? `, and ${p.credits_unsaved} charged for ${where} before it failed. Those people were not saved.`
           : `. Nothing was charged for ${where}.`}
       </p>
-      <p>To retry, count again above. People already found for this role are skipped, so you only pay for new ones.</p>
+      <p>To retry, count that search again. People already found for this role are skipped, so you only pay for new ones.</p>
     </div>
   );
 }
