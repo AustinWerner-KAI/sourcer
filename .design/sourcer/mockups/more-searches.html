@@ -1,0 +1,96 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../../../web/src/styles.css">
+<style>
+.opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.opt{border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--surface-2);display:flex;flex-direction:column;gap:10px}
+.opt.on{border-color:rgba(255,209,0,.45)}
+.opt .lbl{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--gold)}
+.opt .lbl.mine{color:var(--muted)}
+.opt h3{margin:0;font-size:16px}
+.opt p{margin:0;font-size:13.5px;color:var(--text-2);line-height:1.45}
+.chg{display:flex;flex-wrap:wrap;gap:6px}
+.chg .chip{min-height:32px}
+.chip .x{border:0;background:none;color:inherit;font:inherit;font-size:15px;line-height:1;padding:0 0 0 4px;margin-right:-4px;cursor:pointer;opacity:.75}
+.opt .n{font-family:var(--display);font-size:22px}
+.opt .foot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left}
+.opt .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.found{font-size:12.5px;color:var(--muted)}
+.found b{color:var(--text-2);font-weight:400}
+.opt .seg.pick{display:flex}.opt .seg.pick button{flex:1;white-space:nowrap}
+.opt .btn-ghost{min-height:40px}
+.tag{font-size:12.5px;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,209,0,.35);color:var(--gold);white-space:nowrap}
+.mini{display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;gap:10px;font-size:14px;padding:12px 0;border-top:1px solid var(--line)}
+.bar .sum{display:flex;flex-direction:column;gap:2px;font-size:13.5px}
+.bar .sum .from{color:var(--text-2)}
+.bar .btn-primary{white-space:nowrap}
+@media(max-width:900px){
+ .opts{grid-template-columns:1fr}
+ .chg .chip,.opt .seg.pick button,.opt .btn-ghost,.steps a,.steps span{min-height:44px}
+ .chip .x{min-width:44px;min-height:44px;margin:-6px -11px -6px -8px;padding:0}
+ .bar{flex-direction:column;align-items:stretch}
+ .bar .btn-primary{min-height:48px;width:100%}
+ .mini{grid-template-columns:auto 1fr;row-gap:4px}
+ .mini .ti{grid-column:2}.mini .tag{grid-column:2;justify-self:start}
+}
+</style></head><body>
+<div class="shell">
+<nav class="nav"><div><div class="brand">AUSTIN WERNER</div><div class="brand-sub">Sourcer</div></div>
+<div class="nav-links"><a>Today</a><a class="active">Roles</a></div>
+<div class="nav-links util"><a>Settings</a><a>Admin</a></div>
+<div class="user"><div class="user-name">Kai Crayford</div><div class="user-role">Admin</div><button class="link-button">Sign out</button></div></nav>
+<main>
+<div class="head-row"><header><div class="eyebrow">Client A</div><h1>Senior Cloud Security Engineer</h1></header>
+<nav class="steps"><a>1 · Spec and brief</a><span class="on">2 · Search</span><a>3 · Candidates</a></nav></div>
+
+<section class="panel">
+<h2 class="panel-title">First search: the brief</h2>
+<p class="panel-note">Counted 10 minutes ago from brief version 3.</p>
+<div class="count"><span class="l">Dubai</span><span class="n">4</span><span class="meta">4 pulled</span></div>
+<div class="count"><span class="l">Abu Dhabi</span><span class="n">0</span><span class="meta">none to pull</span></div>
+<p class="warnline">Only 4 found. Claude suggests two wider searches below, or set up your own.</p>
+</section>
+
+<section class="panel">
+<h2 class="panel-title">More searches <span class="c">up to 3</span></h2>
+<p class="panel-note">Everyone found joins the same candidate list, ranked against the same brief. People already found are skipped, so you never pay twice.</p>
+<div class="opts">
+ <div class="opt on">
+  <div class="lbl">Claude's pick</div>
+  <h3>Wider titles</h3>
+  <p>Same level, places and must-haves. Adds titles people use for this work.</p>
+  <div class="chg"><span class="chip yes">+ Cloud Security Architect<button class="x" aria-label="Remove Cloud Security Architect">×</button></span><span class="chip yes">+ DevSecOps Engineer<button class="x" aria-label="Remove DevSecOps Engineer">×</button></span><span class="chip yes">+ Platform Security Engineer<button class="x" aria-label="Remove Platform Security Engineer">×</button></span></div>
+  <div class="foot">
+   <div><span class="n">35</span> <span class="found">new · <b>38 found, 3 already on your list</b></span></div>
+   <span class="seg pick" role="group" aria-label="How many to pull from Wider titles"><button>None</button><button class="sel" aria-pressed="true">25</button><button>All 35</button></span>
+  </div>
+ </div>
+ <div class="opt on">
+  <div class="lbl">Claude's pick</div>
+  <h3>Wider places</h3>
+  <p>Same brief. Adds nearby markets where people often move to the UAE.</p>
+  <div class="chg"><span class="chip yes">+ Riyadh<button class="x" aria-label="Remove Riyadh">×</button></span><span class="chip yes">+ Doha<button class="x" aria-label="Remove Doha">×</button></span><span class="chip yes">+ London, open to relocating<button class="x" aria-label="Remove London, open to relocating">×</button></span></div>
+  <div class="foot">
+   <span class="found">Not counted yet</span>
+   <button class="btn-ghost">Count · 3 credits</button>
+  </div>
+ </div>
+ <div class="opt">
+  <div class="lbl mine">Your own</div>
+  <h3>Your search</h3>
+  <p>Start from the brief and change titles, places, level or tools. The brief itself stays as it is.</p>
+  <div class="foot">
+   <span class="found">Not set up</span>
+   <button class="btn-ghost">Set up</button>
+  </div>
+ </div>
+</div>
+<div class="bar" style="margin-top:16px"><span class="sum"><span class="from">25 from Wider titles</span><span class="total">This month: <strong>42 → 67 credits</strong></span></span>
+<button class="btn-primary btn-inline">Pull 25 people · 25 credits</button></div>
+</section>
+
+<section class="panel">
+<h2 class="panel-title">On the candidate list</h2>
+<div class="mini"><div class="tier a">A</div><strong>Sam Sample</strong><span class="ti">Cloud Security Architect · Samplefirm</span><span class="tag">Found by: Wider titles</span></div>
+<div class="mini"><div class="tier b">B</div><strong>Alex Example</strong><span class="ti">Senior Security Engineer · Examplepay</span><span class="tag">Found by: the brief</span></div>
+</section>
+</main></div></body></html>
