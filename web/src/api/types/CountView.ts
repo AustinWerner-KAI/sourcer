@@ -9,4 +9,8 @@ counted_at: number,
 /**
  * The brief has been confirmed again since, so this count is out of date.
  */
-stale: boolean, locations: Array<CountLocation>, credits_used: number, };
+stale: boolean, locations: Array<CountLocation>, credits_used: number, 
+/**
+ * Already pulled from. Each count is pulled from once.
+ */
+pulled: boolean, };

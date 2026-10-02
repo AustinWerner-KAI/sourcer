@@ -339,6 +339,10 @@ pub struct SearchState {
     pub blocked: Option<String>,
     pub count: Option<CountView>,
     pub pull: Option<PullView>,
+    /// A pull for this role, from any search, is still running.
+    pub pulling: bool,
+    /// Up to three wider searches of the confirmed brief, by slot.
+    pub more: Vec<MoreSearch>,
     /// Credits used by this organisation since the start of the month.
     #[ts(type = "number")]
     pub credits_this_month: i64,
@@ -356,6 +360,8 @@ pub struct CountView {
     pub stale: bool,
     pub locations: Vec<CountLocation>,
     pub credits_used: i32,
+    /// Already pulled from. Each count is pulled from once.
+    pub pulled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -391,6 +397,8 @@ pub struct PullView {
     /// Credits paid for people who were never saved (a location failed after
     /// the provider charged). Already counted in credits_used.
     pub credits_unsaved: i32,
+    /// The wider search this pull came from, or `None` for the brief.
+    pub search_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -412,6 +420,90 @@ pub struct PullPick {
 pub struct PullRequest {
     pub count_id: uuid::Uuid,
     pub picks: Vec<PullPick>,
+    /// Required when pulling more than 50 people at once.
+    pub confirmed: bool,
+    pub key: String,
+}
+
+/// What a wider search adds to the brief. It can only widen: the search is
+/// the brief with these applied, so the people found still fit the job.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct Widen {
+    #[serde(default)]
+    pub add_titles: Vec<String>,
+    #[serde(default)]
+    pub add_levels: Vec<String>,
+    #[serde(default)]
+    pub add_locations: Vec<String>,
+    /// Only from the employer types Sourcer knows.
+    #[serde(default)]
+    pub add_employer_types: Vec<String>,
+    /// Required tools, by name, that become nice to have.
+    #[serde(default)]
+    pub tools_to_nice: Vec<String>,
+    /// Must domains, by name, that become Plus.
+    #[serde(default)]
+    pub domains_to_plus: Vec<String>,
+    /// Fewer years than the brief asks for; 0 for any. `None` keeps the brief's.
+    #[serde(default)]
+    pub min_years: Option<i32>,
+}
+
+/// One of a role's wider searches, as the Search screen shows it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct MoreSearch {
+    /// 1 and 2 are Claude's picks; 3 is the resourcer's own.
+    pub slot: i32,
+    pub by_claude: bool,
+    pub name: String,
+    /// What it adds and why, in one sentence.
+    pub note: String,
+    pub widen: Widen,
+    pub version: i32,
+    /// The places it counts and pulls: only those where it differs from the brief.
+    pub locations: Vec<String>,
+    /// The latest count of this search, if any.
+    pub count: Option<MoreCount>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct MoreCount {
+    pub id: uuid::Uuid,
+    /// Seconds since 1970.
+    #[ts(type = "number")]
+    pub counted_at: i64,
+    /// The search changed since this count.
+    pub stale: bool,
+    /// People not already found for this role, per place.
+    pub locations: Vec<CountLocation>,
+    pub credits_used: i32,
+    pub pulled: bool,
+}
+
+/// PUT /api/roles/:id/searches/:slot
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct SaveSearch {
+    pub widen: Widen,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct MorePick {
+    pub slot: i32,
+    pub count_id: uuid::Uuid,
+    /// People to pull from this search, spread over its places.
+    pub size: u32,
+}
+
+/// POST /api/roles/:id/searches/pull
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct MorePullRequest {
+    pub picks: Vec<MorePick>,
     /// Required when pulling more than 50 people at once.
     pub confirmed: bool,
     pub key: String,
@@ -489,6 +581,8 @@ pub struct CandidateRow {
     pub do_not_contact: bool,
     /// No current employer on record: check before any contact.
     pub employer_unknown: bool,
+    /// The wider search that found them, or `None` for the brief's own.
+    pub found_by: Option<String>,
     pub has_work_email: bool,
     pub has_phone: bool,
     /// Work email, personal emails and phones, work first. Empty for anyone
