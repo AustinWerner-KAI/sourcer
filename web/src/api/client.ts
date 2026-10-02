@@ -28,6 +28,11 @@ import type { FeedbackRequest } from "./types/FeedbackRequest";
 import type { OutreachView } from "./types/OutreachView";
 import type { OutreachStepEdit } from "./types/OutreachStepEdit";
 import type { OutreachSettings } from "./types/OutreachSettings";
+import type { Controls } from "./types/Controls";
+import type { ClientUpdate } from "./types/ClientUpdate";
+import type { DncEntry } from "./types/DncEntry";
+import type { DncList } from "./types/DncList";
+import type { NewDnc } from "./types/NewDnc";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -84,6 +89,8 @@ export const api = {
 
   clients: () => get<Client[]>("/api/clients"),
   createClient: (c: NewClient) => send<Client>("POST", "/api/clients", c),
+  /** Admins only: name, domain and the off-limits flag. */
+  updateClient: (id: string, c: ClientUpdate) => send<Client>("PATCH", `/api/clients/${id}`, c),
   roles: () => get<RoleSummary[]>("/api/roles"),
   role: (id: string) => get<RoleDetail>(`/api/roles/${id}`),
   createRole: (r: NewRole) => send<RoleDetail>("POST", "/api/roles", r),
@@ -163,6 +170,13 @@ export const api = {
     send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach/stop`, { version }),
   outreachSettings: () => get<OutreachSettings>("/api/me/outreach"),
   saveOutreachSettings: (s: OutreachSettings) => send<OutreachSettings>("PUT", "/api/me/outreach", s),
+
+  controls: () => get<Controls>("/api/admin/controls"),
+  saveControls: (c: Controls) => send<Controls>("PUT", "/api/admin/controls", c),
+  dnc: (q: string, page: number) =>
+    get<DncList>(`/api/admin/do-not-contact?q=${encodeURIComponent(q)}&page=${page}`),
+  /** Permanent: there is no way to remove an entry. */
+  addDnc: (n: NewDnc) => send<DncEntry>("POST", "/api/admin/do-not-contact", n),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {

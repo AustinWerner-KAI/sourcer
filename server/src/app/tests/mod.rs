@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod admin_api;
 mod auth_api;
 mod candidates_api;
 mod cv_api;
