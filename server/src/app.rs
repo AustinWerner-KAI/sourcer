@@ -20,10 +20,10 @@ use crate::{
     candidates, crm, cv,
     domain::Health,
     mail::{self, Mail},
-    outreach, people,
+    more, outreach, people,
     ratelimit::{self, RateLimiter},
     recruitly::Recruitly,
-    retune, roles, searching,
+    roles, searching,
     sources::pdl::PdlClient,
     team, today,
 };
@@ -134,7 +134,10 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/brief/confirm", post(roles::confirm_brief))
         .route("/api/roles/:id/search", get(searching::get_search))
         .route("/api/roles/:id/search/count", post(searching::count))
-        .route("/api/roles/:id/search/retune", post(retune::retune))
+        .route("/api/roles/:id/searches/suggest", post(more::suggest))
+        .route("/api/roles/:id/searches/pull", post(more::pull))
+        .route("/api/roles/:id/searches/:slot", put(more::save))
+        .route("/api/roles/:id/searches/:slot/count", post(more::count))
         .route("/api/roles/:id/search/pull", post(searching::pull))
         .route("/api/roles/:id/candidates", get(candidates::list))
         .route("/api/roles/:id/candidates/rank", post(candidates::rank_now))

@@ -15,6 +15,7 @@ pub mod domain;
 pub mod employer;
 pub mod jobs;
 pub mod mail;
+pub mod more;
 pub mod outreach;
 pub mod people;
 pub mod plan;
