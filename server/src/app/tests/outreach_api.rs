@@ -119,7 +119,7 @@ async fn draft_edit_approve_and_stop() {
         .contains("professional data provider"));
     assert_eq!(
         v["problems"],
-        json!(["Add your email signature in Settings first."])
+        json!(["Someone has no email signature yet. Add it in Settings first."])
     );
     assert_eq!(v["sending_ready"], false);
 
@@ -354,40 +354,233 @@ async fn rejecting_stops_the_emails() {
     assert_eq!(state_of(&pool, c).await, "rejected");
 }
 
+async fn set_signature(app: &Router, me: &str, sig: &str) {
+    let body = json!({"signature": sig, "intro": ""});
+    let res = send(app, json_req("PUT", "/api/me/outreach", me, body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+async fn draft(app: &Router, me: &str, c: Uuid) -> Value {
+    let res = send(
+        app,
+        json_req(
+            "POST",
+            &format!("/api/candidates/{c}/outreach"),
+            me,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    json_body(res).await
+}
+
 #[tokio::test]
-async fn another_organisation_sees_nothing() {
+async fn another_organisation_cannot_touch_a_draft() {
     let Some(pool) = testutil::pool().await else {
         return;
     };
     let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
     let c = shortlisted(&pool, org, Some(&personal())).await;
+    let v = draft(&app, &me, c).await;
+    let version = v["version"].clone();
+
     let other = testutil::org(&pool).await;
     let (_, them) = signed_in(&pool, other, "admin").await;
-    let app = plain_app(pool.clone());
     let uri = format!("/api/candidates/{c}/outreach");
     assert_eq!(
         send(&app, get_req(&uri, Some(&them))).await.status(),
         StatusCode::NOT_FOUND
     );
-    let res = send(&app, json_req("POST", &uri, &them, json!({}))).await;
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    for (method, path, body) in [
+        ("POST", uri.clone(), json!({})),
+        ("POST", format!("{uri}?fresh=true"), json!({})),
+        ("PUT", uri.clone(), edit(&v, 1, "Changed by someone else")),
+        (
+            "POST",
+            format!("{uri}/approve"),
+            json!({"version": version}),
+        ),
+        ("POST", format!("{uri}/stop"), json!({"version": version})),
+    ] {
+        let res = send(&app, json_req(method, &path, &them, body)).await;
+        assert_ne!(res.status(), StatusCode::OK, "{method} {path}");
+    }
+    let after = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    assert_eq!(after["status"], "draft");
+    assert_eq!(after["version"], version);
+    assert_eq!(after["steps"], v["steps"]);
+    assert_eq!(state_of(&pool, c).await, "drafted");
+}
+
+#[tokio::test]
+async fn the_signature_is_checked_and_kept_as_approved() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
+    let c = shortlisted(&pool, org, Some(&personal())).await;
+    let uri = format!("/api/candidates/{c}/outreach");
+
+    // A signature naming the client blocks approval.
+    set_signature(
+        &app,
+        &me,
+        "Regards\nSam\nRecruiting for test-client.example",
+    )
+    .await;
+    let v = draft(&app, &me, c).await;
+    assert!(
+        v["problems"].as_array().unwrap().iter().any(|p| p
+            .as_str()
+            .unwrap()
+            .starts_with("The signature names the client")),
+        "{}",
+        v["problems"]
+    );
     let res = send(
         &app,
         json_req(
             "POST",
             &format!("{uri}/approve"),
-            &them,
-            json!({"version": 0}),
+            &me,
+            json!({"version": v["version"]}),
         ),
     )
     .await;
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
-    // Stop does not reveal it either.
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // Approved with a clean signature; a later edit does not change it.
+    set_signature(&app, &me, "Regards\nSam Recruiter").await;
+    let v = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    assert_eq!(v["problems"], json!([]));
     let res = send(
         &app,
-        json_req("POST", &format!("{uri}/stop"), &them, json!({"version": 0})),
+        json_req(
+            "POST",
+            &format!("{uri}/approve"),
+            &me,
+            json!({"version": v["version"]}),
+        ),
     )
     .await;
-    assert_ne!(res.status(), StatusCode::OK);
-    assert_eq!(state_of(&pool, c).await, "shortlisted");
+    assert_eq!(res.status(), StatusCode::OK);
+    set_signature(&app, &me, "Regards\nSomething new").await;
+    let v = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    let html = v["steps"][0]["html"].as_str().unwrap();
+    assert!(html.contains("Sam Recruiter") && !html.contains("Something new"));
+
+    // Rejecting clears the approval and records the stop.
+    let version: i32 = sqlx::query_scalar("SELECT version FROM candidacy WHERE id = $1")
+        .bind(c)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let row = json!({"id": c, "version": version});
+    let res = send(&app, decide_req(&me, &row, "reject", Some("FIT"))).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let approved_by: Option<Uuid> =
+        sqlx::query_scalar("SELECT sequence_approved_by FROM candidacy WHERE id = $1")
+            .bind(c)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(approved_by, None);
+    let stops: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'outreach.stop'
+           AND target LIKE '%reason:rejected'",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stops, 1);
+}
+
+#[tokio::test]
+async fn only_stopping_moves_someone_back_to_the_shortlist() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
+    let c = shortlisted(&pool, org, Some(&personal())).await;
+    draft(&app, &me, c).await;
+    let version: i32 = sqlx::query_scalar("SELECT version FROM candidacy WHERE id = $1")
+        .bind(c)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let row = json!({"id": c, "version": version});
+    let res = send(&app, decide_req(&me, &row, "shortlist", None)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(state_of(&pool, c).await, "drafted");
+}
+
+#[tokio::test]
+async fn a_fresh_draft_never_replaces_newer_work() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
+    let c = shortlisted(&pool, org, Some(&personal())).await;
+    let uri = format!("/api/candidates/{c}/outreach");
+    let v = draft(&app, &me, c).await;
+    let res = send(
+        &app,
+        json_req("PUT", &uri, &me, edit(&v, 2, "My own words.")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    // A window still showing the first version cannot start again over the edit.
+    let stale = format!("{uri}?fresh=true&version={}", v["version"]);
+    let res = send(&app, json_req("POST", &stale, &me, json!({}))).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let now = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    assert_eq!(now["steps"][1]["body"], "My own words.");
+}
+
+#[tokio::test]
+async fn do_not_contact_after_drafting_blocks_approval() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
+    set_signature(&app, &me, "Regards\nSam").await;
+    let to = personal();
+    let c = shortlisted(&pool, org, Some(&to)).await;
+    let v = draft(&app, &me, c).await;
+    assert_eq!(v["problems"], json!([]));
+    sqlx::query(
+        "INSERT INTO do_not_contact (org_id, identifier, reason) VALUES ($1, lower($2), 'opt_out')",
+    )
+    .bind(org)
+    .bind(&to)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let uri = format!("/api/candidates/{c}/outreach");
+    let v = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
+    assert_eq!(v["problems"], json!(["On the do-not-contact list."]));
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/approve"),
+            &me,
+            json!({"version": v["version"]}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(state_of(&pool, c).await, "drafted");
 }

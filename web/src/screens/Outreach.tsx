@@ -93,7 +93,7 @@ function Sequence({ id, roleId, onClosed }: { id: string; roleId: string; onClos
     },
     onError: refresh,
   });
-  const redo = useMutation({ mutationFn: () => api.draftOutreach(id, true), onSuccess: done, onError: refresh });
+  const redo = useMutation({ mutationFn: () => api.draftOutreach(id, v!.version), onSuccess: done, onError: refresh });
 
   if (q.isLoading) return <p className="panel-note">Loading the emails</p>;
   if (!v) return <p className="form-error">Could not load the emails. Please refresh.</p>;
