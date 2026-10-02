@@ -263,9 +263,18 @@ impl Mail {
         if res.status() == reqwest::StatusCode::BAD_REQUEST
             || res.status() == reqwest::StatusCode::UNAUTHORIZED
         {
-            // invalid_grant: revoked, expired, password changed or consent removed.
             let body: Value = res.json().await.unwrap_or_default();
-            tracing::warn!(user = %user_id, error = %body["error"], "Outlook connection refused");
+            let code = body["error"].as_str().unwrap_or_default().to_string();
+            // Only invalid_grant is about this person's connection (revoked,
+            // expired, password changed, consent removed). Anything else, such
+            // as an expired app secret, is the server's setup: nobody's
+            // connection is marked broken for it.
+            if code != "invalid_grant" {
+                return Err(MailError::Other(anyhow::anyhow!(
+                    "Microsoft refused the token request: {code}"
+                )));
+            }
+            tracing::warn!(user = %user_id, "Outlook connection refused");
             sqlx::query("UPDATE mailbox SET broken = $2 WHERE user_id = $1")
                 .bind(user_id)
                 .bind(RECONNECT)
@@ -416,7 +425,7 @@ impl Mail {
         let res = self
             .http
             .get(self.url(&format!(
-                "/me/messages/{}?$select=isDraft,sentDateTime,conversationId,internetMessageId",
+                "/me/messages/{}?$select=isDraft,parentFolderId",
                 enc(id)
             ))?)
             .bearer_auth(token)
@@ -427,10 +436,26 @@ impl Mail {
             return Ok(SentState::Gone);
         }
         let v: Value = self.check(user_id, res)?.json().await?;
-        Ok(if v["isDraft"].as_bool().unwrap_or(true) {
+        if v["isDraft"].as_bool() == Some(false) {
+            return Ok(SentState::Sent);
+        }
+        // Microsoft keeps the same id through sending, but the Sent Items copy
+        // only appears once it has gone. A draft is safe to send again only
+        // while it is still in Drafts.
+        let res = self
+            .http
+            .get(self.url("/me/mailFolders/drafts?$select=id")?)
+            .bearer_auth(token)
+            .header(IMMUTABLE.0, IMMUTABLE.1)
+            .send()
+            .await?;
+        let drafts: Value = self.check(user_id, res)?.json().await?;
+        let in_drafts = drafts["id"].as_str().is_some()
+            && v["parentFolderId"].as_str() == drafts["id"].as_str();
+        Ok(if in_drafts {
             SentState::Draft
         } else {
-            SentState::Sent
+            SentState::InTransit
         })
     }
 
@@ -453,6 +478,7 @@ impl Mail {
                         "$select",
                         "from,subject,conversationId,receivedDateTime,isDraft",
                     ),
+                    ("$orderby", "receivedDateTime asc"),
                     ("$top", "100"),
                 ],
             )
@@ -496,8 +522,13 @@ impl Mail {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SentState {
+    /// Still in Drafts: it never went.
     Draft,
+    /// Sent.
     Sent,
+    /// Neither: on its way (Outbox) or moved. Wait, never send it again.
+    InTransit,
+    /// Not in the mailbox.
     Gone,
 }
 
