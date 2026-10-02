@@ -56,7 +56,7 @@ async function main() {
   // Only roles that can take people: a confirmed brief and a client to keep out.
   const roles = (await rolesRes.json()).filter((r) => r.brief_state === "confirmed" && r.client_name);
   if (roles.length === 0) {
-    $("to-briefs").href = origin + "/brief";
+    $("to-briefs").href = origin + "/roles";
     show("no-roles");
     return;
   }
@@ -120,7 +120,7 @@ async function main() {
       result.className = c.do_not_contact || c.known ? "msg warn" : "msg ok";
       result.textContent = lines.join(" ") + " ";
       const open = document.createElement("a");
-      open.href = `${origin}/brief/${roleId}/candidates`;
+      open.href = `${origin}/roles/${roleId}/candidates`;
       open.target = "_blank";
       open.rel = "noopener";
       open.textContent = "Open candidates";
