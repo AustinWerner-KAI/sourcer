@@ -44,6 +44,12 @@ pub mod action {
     pub const CONTROLS_SET: &str = "org.controls";
     pub const CLIENT_UPDATED: &str = "client.update";
     pub const DNC_ADDED: &str = "dnc.add";
+    pub const MAIL_CONNECTED: &str = "mail.connect";
+    pub const MAIL_DISCONNECTED: &str = "mail.disconnect";
+    pub const OUTREACH_SENT: &str = "outreach.send";
+    pub const OUTREACH_REPLY: &str = "outreach.reply";
+    pub const REPLY_HANDLED: &str = "outreach.reply_handled";
+    pub const OPTED_OUT: &str = "person.opt_out";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.

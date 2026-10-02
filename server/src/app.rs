@@ -19,12 +19,13 @@ use crate::{
     auth::AuthConfig,
     candidates, crm, cv,
     domain::Health,
+    mail::{self, Mail},
     outreach, people,
     ratelimit::{self, RateLimiter},
     recruitly::Recruitly,
     retune, roles, searching,
     sources::pdl::PdlClient,
-    team,
+    team, today,
 };
 
 /// Brief drafts each person may run in ten minutes.
@@ -56,6 +57,8 @@ pub struct AppState {
     pub search_limit: Arc<RateLimiter<uuid::Uuid>>,
     /// The team's CRM and ATS. Not configured until RECRUITLY_API_KEY is set.
     pub recruitly: Arc<Recruitly>,
+    /// Each person's Outlook. Not configured until MAIL_TOKEN_KEY and sign-in are set.
+    pub mail: Arc<Mail>,
 }
 
 impl AppState {
@@ -79,6 +82,7 @@ impl AppState {
                 std::time::Duration::from_secs(600),
             )),
             recruitly: Arc::new(Recruitly::new(None, None)),
+            mail: Arc::new(Mail::new(None)),
         }
     }
 }
@@ -169,6 +173,12 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
             "/api/me/outreach",
             get(outreach::get_settings).put(outreach::put_settings),
         )
+        .route("/api/mail", get(mail::status).delete(mail::disconnect))
+        .route("/api/mail/connect", get(mail::connect))
+        .route(mail::CALLBACK_PATH, get(mail::callback))
+        .route("/api/today", get(today::today))
+        .route("/api/candidates/:id/reply-handled", post(today::handled))
+        .route("/api/candidates/:id/opt-out", post(today::opt_out))
         .with_state(state);
     let api = api.layer(middleware::from_fn(require_change_header));
     let app = match web_dir {

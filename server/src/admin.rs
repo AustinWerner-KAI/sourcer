@@ -42,6 +42,8 @@ pub struct Controls {
     pub sending_paused: bool,
     /// No paid call (search, ranking, CV assessment) is made while this is on.
     pub paid_calls_paused: bool,
+    /// First emails each person may send in one Dubai day (0 to 200).
+    pub first_emails_per_day: i32,
 }
 
 /// GET /api/admin/controls
@@ -49,15 +51,17 @@ pub async fn get_controls(State(state): State<AppState>, Admin(user): Admin) -> 
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let row: Result<(bool, bool), _> =
-        sqlx::query_as("SELECT sending_paused, paid_calls_paused FROM org WHERE id = $1")
-            .bind(user.org_id)
-            .fetch_one(pool)
-            .await;
+    let row: Result<(bool, bool, i32), _> = sqlx::query_as(
+        "SELECT sending_paused, paid_calls_paused, first_emails_per_day FROM org WHERE id = $1",
+    )
+    .bind(user.org_id)
+    .fetch_one(pool)
+    .await;
     match row {
-        Ok((sending_paused, paid_calls_paused)) => Json(Controls {
+        Ok((sending_paused, paid_calls_paused, first_emails_per_day)) => Json(Controls {
             sending_paused,
             paid_calls_paused,
+            first_emails_per_day,
         })
         .into_response(),
         Err(e) => server_error(e),
@@ -73,22 +77,32 @@ pub async fn put_controls(
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    if !(0..=200).contains(&c.first_emails_per_day) {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "First emails a day must be between 0 and 200.",
+        );
+    }
     let result = async {
         let mut tx = pool.begin().await?;
-        sqlx::query("UPDATE org SET sending_paused = $2, paid_calls_paused = $3 WHERE id = $1")
-            .bind(user.org_id)
-            .bind(c.sending_paused)
-            .bind(c.paid_calls_paused)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE org SET sending_paused = $2, paid_calls_paused = $3, first_emails_per_day = $4
+             WHERE id = $1",
+        )
+        .bind(user.org_id)
+        .bind(c.sending_paused)
+        .bind(c.paid_calls_paused)
+        .bind(c.first_emails_per_day)
+        .execute(&mut *tx)
+        .await?;
         audit::record(
             &mut *tx,
             user.org_id,
             Some(user.id),
             audit::action::CONTROLS_SET,
             &format!(
-                "sending_paused:{} paid_calls_paused:{}",
-                c.sending_paused, c.paid_calls_paused
+                "sending_paused:{} paid_calls_paused:{} first_emails_per_day:{}",
+                c.sending_paused, c.paid_calls_paused, c.first_emails_per_day
             ),
         )
         .await?;

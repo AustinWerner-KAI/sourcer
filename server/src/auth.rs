@@ -82,7 +82,13 @@ impl std::fmt::Debug for AuthConfig {
 }
 
 /// One place that builds every cookie, so set and clear always match.
-fn cookie(name: &str, value: &str, path: &str, max_age: i64, secure: bool) -> HeaderValue {
+pub(crate) fn cookie(
+    name: &str,
+    value: &str,
+    path: &str,
+    max_age: i64,
+    secure: bool,
+) -> HeaderValue {
     let secure = if secure { "; Secure" } else { "" };
     let c =
         format!("{name}={value}; Path={path}; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}");
@@ -94,13 +100,13 @@ fn failed(reason: &str) -> Response {
     Redirect::to(&format!("/?signin={reason}")).into_response()
 }
 
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn sha256_b64(s: &str) -> String {
+pub(crate) fn sha256_b64(s: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(s.as_bytes()))
 }
 
@@ -112,7 +118,7 @@ fn not_configured() -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, "sign-in is not configured").into_response()
 }
 
-fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
