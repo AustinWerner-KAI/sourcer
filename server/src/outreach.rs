@@ -632,6 +632,15 @@ async fn checks(
 ) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mut problems = Vec::new();
     let mut notes = Vec::new();
+    let closed: bool =
+        sqlx::query_scalar("SELECT closed_at IS NOT NULL FROM role WHERE id = $1 AND org_id = $2")
+            .bind(ctx.role_id)
+            .bind(org_id)
+            .fetch_one(pool)
+            .await?;
+    if closed {
+        problems.push("This role is closed.".into());
+    }
     let companies = employer::locked_out(pool, org_id, ctx.role_id).await?;
     let what = |named: &[String]| {
         let client = companies
