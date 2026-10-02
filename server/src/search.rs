@@ -30,6 +30,8 @@ pub struct SearchRequest {
     /// The pull this search belongs to, and its location label.
     pub pull_id: Option<Uuid>,
     pub location: Option<String>,
+    /// The wider search this belongs to, or `None` for the brief's own.
+    pub search_id: Option<Uuid>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -148,8 +150,8 @@ pub async fn run_search<S: PeopleSource>(
         }
         save_contacts(&mut tx, req.org_id, person_id, record).await?;
         let inserted = sqlx::query(
-            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id, employer_unknown)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO candidacy (org_id, person_id, role_id, brief_id, employer_unknown, search_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (person_id, role_id) DO NOTHING",
         )
         .bind(req.org_id)
@@ -157,6 +159,7 @@ pub async fn run_search<S: PeopleSource>(
         .bind(req.role_id)
         .bind(req.brief_id)
         .bind(verdict == Verdict::Unknown)
+        .bind(req.search_id)
         .execute(&mut *tx)
         .await?;
         let added = inserted.rows_affected() as usize;
@@ -534,6 +537,7 @@ mod tests {
             idempotency_key: format!("k-{}", Uuid::new_v4()),
             pull_id: None,
             location: None,
+            search_id: None,
         };
         Some((pool, req))
     }

@@ -61,6 +61,21 @@ fn industries(employer_type: &str) -> Vec<&'static str> {
         ],
         "E-commerce" => vec!["internet", "retail", "consumer goods"],
         "Adtech" => vec!["marketing and advertising", "internet"],
+        "Banks" => vec!["banking"],
+        "Insurance" => vec!["insurance"],
+        "Asset and wealth managers" => vec!["investment management"],
+        "Exchanges and market infrastructure" => vec!["capital markets"],
+        "VC and private equity" => vec!["venture capital & private equity"],
+        "Cybersecurity vendors" => vec!["computer & network security"],
+        "Cloud and SaaS" => vec!["computer software"],
+        "Big tech and platforms" => vec!["internet"],
+        "IT services" => vec!["information technology and services"],
+        "Consulting and Big Four" => vec!["management consulting", "accounting"],
+        "Telecoms" => vec!["telecommunications"],
+        "Gaming and betting" => vec!["computer games", "gambling & casinos"],
+        "Government and defence" => vec!["government administration", "defense & space"],
+        "Energy and commodities" => vec!["oil & energy", "mining & metals"],
+        "Healthcare" => vec!["hospital & health care"],
         _ => vec![],
     }
 }
@@ -295,6 +310,18 @@ pub fn plan(lines: &BriefLines, locked_out: &[Company]) -> Vec<LocationSearch> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_offered_employer_type_maps_to_industries() {
+        let editor = include_str!("../../web/src/screens/BriefEditor.tsx");
+        for t in crate::retune::EMPLOYER_TYPES {
+            assert!(!industries(t).is_empty(), "{t} has no industry");
+            assert!(
+                editor.contains(&format!("\"{t}\"")),
+                "{t} is not offered in the brief editor"
+            );
+        }
+    }
     use crate::domain::{BriefDomain, BriefTool};
     use uuid::Uuid;
 
