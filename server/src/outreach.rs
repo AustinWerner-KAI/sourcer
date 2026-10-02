@@ -795,7 +795,7 @@ pub async fn start(
     if let Some((id, _)) = existing {
         let went: Result<bool, _> = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM outreach_step WHERE outreach_id = $1
-                            AND (sent_at IS NOT NULL OR sending_since IS NOT NULL))",
+                            AND (sent_at IS NOT NULL OR sending_since IS NOT NULL OR unconfirmed_at IS NOT NULL))",
         )
         .bind(id)
         .fetch_one(&pool)
@@ -856,7 +856,8 @@ pub async fn start(
              WHERE outreach.status IN ('draft', 'stopped')
                AND ($5::int IS NULL OR outreach.version = $5)
                AND NOT EXISTS (SELECT 1 FROM outreach_step x WHERE x.outreach_id = outreach.id
-                                 AND (x.sent_at IS NOT NULL OR x.sending_since IS NOT NULL))
+                                 AND (x.sent_at IS NOT NULL OR x.sending_since IS NOT NULL
+                                      OR x.unconfirmed_at IS NOT NULL))
              RETURNING id",
         )
         .bind(user.org_id)

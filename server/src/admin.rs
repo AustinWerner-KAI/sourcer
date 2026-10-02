@@ -68,16 +68,30 @@ pub async fn get_controls(State(state): State<AppState>, Admin(user): Admin) -> 
     }
 }
 
-/// PUT /api/admin/controls
+/// Only the switches being changed, so two admins never undo each other.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct ControlsChange {
+    #[ts(optional)]
+    pub sending_paused: Option<bool>,
+    #[ts(optional)]
+    pub paid_calls_paused: Option<bool>,
+    #[ts(optional)]
+    pub first_emails_per_day: Option<i32>,
+}
+
+/// PUT /api/admin/controls: change one or more switches.
 pub async fn put_controls(
     State(state): State<AppState>,
     Admin(user): Admin,
-    Json(c): Json<Controls>,
+    Json(c): Json<ControlsChange>,
 ) -> Response {
     let Some(pool) = state.pool.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    if !(0..=200).contains(&c.first_emails_per_day) {
+    if c.first_emails_per_day
+        .is_some_and(|n| !(0..=200).contains(&n))
+    {
         return refuse(
             StatusCode::BAD_REQUEST,
             "First emails a day must be between 0 and 200.",
@@ -85,33 +99,40 @@ pub async fn put_controls(
     }
     let result = async {
         let mut tx = pool.begin().await?;
-        sqlx::query(
-            "UPDATE org SET sending_paused = $2, paid_calls_paused = $3, first_emails_per_day = $4
-             WHERE id = $1",
-        )
-        .bind(user.org_id)
-        .bind(c.sending_paused)
-        .bind(c.paid_calls_paused)
-        .bind(c.first_emails_per_day)
-        .execute(&mut *tx)
-        .await?;
+        let (sending_paused, paid_calls_paused, first_emails_per_day): (bool, bool, i32) =
+            sqlx::query_as(
+                "UPDATE org SET sending_paused = coalesce($2, sending_paused),
+                        paid_calls_paused = coalesce($3, paid_calls_paused),
+                        first_emails_per_day = coalesce($4, first_emails_per_day)
+                 WHERE id = $1
+                 RETURNING sending_paused, paid_calls_paused, first_emails_per_day",
+            )
+            .bind(user.org_id)
+            .bind(c.sending_paused)
+            .bind(c.paid_calls_paused)
+            .bind(c.first_emails_per_day)
+            .fetch_one(&mut *tx)
+            .await?;
         audit::record(
             &mut *tx,
             user.org_id,
             Some(user.id),
             audit::action::CONTROLS_SET,
             &format!(
-                "sending_paused:{} paid_calls_paused:{} first_emails_per_day:{}",
-                c.sending_paused, c.paid_calls_paused, c.first_emails_per_day
+                "sending_paused:{sending_paused} paid_calls_paused:{paid_calls_paused} first_emails_per_day:{first_emails_per_day}"
             ),
         )
         .await?;
         tx.commit().await?;
-        anyhow::Ok(())
+        anyhow::Ok(Controls {
+            sending_paused,
+            paid_calls_paused,
+            first_emails_per_day,
+        })
     }
     .await;
     match result {
-        Ok(()) => Json(c).into_response(),
+        Ok(c) => Json(c).into_response(),
         Err(e) => server_error(e),
     }
 }
