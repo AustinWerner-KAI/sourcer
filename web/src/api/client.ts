@@ -22,7 +22,8 @@ import type { RecruitlyJob } from "./types/RecruitlyJob";
 import type { JobPreview } from "./types/JobPreview";
 import type { ImportRole } from "./types/ImportRole";
 import type { HandoverResult } from "./types/HandoverResult";
-import type { RetuneView } from "./types/RetuneView";
+import type { MorePullRequest } from "./types/MorePullRequest";
+import type { Widen } from "./types/Widen";
 import type { CvView } from "./types/CvView";
 import type { FeedbackRequest } from "./types/FeedbackRequest";
 import type { OutreachView } from "./types/OutreachView";
@@ -47,6 +48,22 @@ export class SignedOut extends Error {
   }
 }
 
+/** The server refused, with its own message and status. */
+export class Refused extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Keep a request's key: the network dropped (the server may have it), or the
+ * server is still working on that same key. Any other answer settles it.
+ */
+export const keepKey = (e: unknown) =>
+  e instanceof TypeError || (e instanceof Refused && e.status === 409 && e.message.startsWith("Still counting"));
+
 /** Send JSON; on failure, throw the server's own message when it gave one. */
 async function send<T>(method: string, path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -64,8 +81,8 @@ async function send<T>(method: string, path: string, body: unknown): Promise<T> 
 async function failure(res: Response): Promise<Error> {
   // Our own refusals carry a message written for people.
   const text = [400, 403, 404, 409, 422, 429, 502, 503].includes(res.status) ? await res.text() : "";
-  if (!text && res.status === 403) return new Error("Only an active admin can do this.");
-  return new Error(text || `Something went wrong (${res.status}). Please try again.`);
+  if (!text && res.status === 403) return new Refused("Only an active admin can do this.", 403);
+  return new Refused(text || `Something went wrong (${res.status}). Please try again.`, res.status);
 }
 
 /** A change with no answer body (204). */
@@ -120,8 +137,14 @@ export const api = {
   /** `key` is fresh per press, so a repeated request never pays twice. */
   countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
   pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
-  /** Round 2: Claude's reading of a thin count and a relaxed brief. Saves and searches nothing. */
-  retune: (id: string) => send<RetuneView>("POST", `/api/roles/${id}/search/retune`, {}),
+  /** Claude chooses two wider searches. Free of search credits; asked once per brief version. */
+  suggestSearches: (id: string) => send<SearchState>("POST", `/api/roles/${id}/searches/suggest`, {}),
+  /** Set what a wider search adds. Slot 3 is the resourcer's own. Searches nothing. */
+  saveSearch: (id: string, slot: number, widen: Widen) =>
+    send<SearchState>("PUT", `/api/roles/${id}/searches/${slot}`, { widen }),
+  countSearch: (id: string, slot: number, key: string) =>
+    send<SearchState>("POST", `/api/roles/${id}/searches/${slot}/count`, { key }),
+  pullSearches: (id: string, req: MorePullRequest) => send<SearchState>("POST", `/api/roles/${id}/searches/pull`, req),
 
   candidates: (id: string, tab: CandidateTab) => get<CandidatesView>(`/api/roles/${id}/candidates?tab=${tab}`),
   rankNow: (id: string) => send<CandidatesView>("POST", `/api/roles/${id}/candidates/rank`, {}),

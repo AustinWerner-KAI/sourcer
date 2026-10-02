@@ -45,7 +45,11 @@ do_not_contact: boolean,
 /**
  * No current employer on record: check before any contact.
  */
-employer_unknown: boolean, has_work_email: boolean, has_phone: boolean, 
+employer_unknown: boolean, 
+/**
+ * The wider search that found them, or `None` for the brief's own.
+ */
+found_by: string | null, has_work_email: boolean, has_phone: boolean, 
 /**
  * Work email, personal emails and phones, work first. Empty for anyone
  * who must not be contacted.

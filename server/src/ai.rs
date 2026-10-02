@@ -174,7 +174,7 @@ impl Claude {
         self.api_key.is_some()
     }
 
-    /// The model that drafts briefs, runs round 2 and assesses CVs.
+    /// The model that drafts briefs, chooses wider searches and assesses CVs.
     pub fn draft_model(&self) -> &str {
         &self.draft_model
     }
@@ -228,16 +228,16 @@ impl Claude {
         Ok(apply_defaults(draft))
     }
 
-    /// Round 2: why a count found too few people, and relaxing moves to try.
-    pub async fn retune(
+    /// More searches: Claude chooses wider searches for a role.
+    pub async fn suggest_searches(
         &self,
         brief: &BriefLines,
         counts: &[crate::domain::CountLocation],
-    ) -> Result<crate::retune::Reply, AiError> {
+    ) -> Result<crate::more::Suggestions, AiError> {
         let key = self.api_key.as_deref().ok_or(AiError::NotConfigured)?;
-        let body = crate::retune::request(&self.draft_model, brief, counts);
+        let body = crate::more::request(&self.draft_model, brief, counts);
         let input = self
-            .call_tool(key, &body, "no round 2 in the reply", DRAFT_TIMEOUT_SECS)
+            .call_tool(key, &body, "no searches in the reply", DRAFT_TIMEOUT_SECS)
             .await?;
         serde_json::from_value(input).map_err(|e| AiError::Provider(e.to_string()))
     }

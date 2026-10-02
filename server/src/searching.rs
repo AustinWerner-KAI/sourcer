@@ -27,8 +27,10 @@ use crate::{
     auth::CurrentUser,
     domain::{
         BriefLines, CountLocation, CountRequest, CountView, PullRequest, PullView, SearchState,
+        Widen,
     },
-    employer, jobs, plan,
+    employer::{self, Company},
+    jobs, plan,
     search::{run_search, SearchRequest},
     sources::{pdl::MAX_PAGE, PeopleSource, SearchQuery},
     worker::{HandlerFuture, JobHandler},
@@ -41,26 +43,26 @@ const MAX_KEY_CHARS: usize = 100;
 /// Most people already found for a role that a pull leaves out by id.
 const MAX_EXCLUDED: usize = 5_000;
 
-fn refuse(code: StatusCode, msg: impl Into<String>) -> Response {
+pub(crate) fn refuse(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, msg.into()).into_response()
 }
 
-fn server_error(e: impl std::fmt::Display) -> Response {
+pub(crate) fn server_error(e: impl std::fmt::Display) -> Response {
     tracing::error!(error = %e, "search request failed");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
-fn valid_key(k: &str) -> bool {
+pub(crate) fn valid_key(k: &str) -> bool {
     !k.trim().is_empty() && k.len() <= MAX_KEY_CHARS
 }
 
 /// A location as counted, with the exact query that was counted, so the pull
 /// searches for the same people.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Counted {
-    label: String,
-    total: i64,
-    query: Value,
+pub(crate) struct Counted {
+    pub label: String,
+    pub total: i64,
+    pub query: Value,
 }
 
 /// The role's latest confirmed brief: (id, version, lines).
@@ -80,7 +82,7 @@ pub(crate) async fn confirmed_brief(
 }
 
 /// Why this role cannot be searched right now, if it cannot.
-async fn blocked(
+pub(crate) async fn blocked(
     state: &AppState,
     pool: &PgPool,
     org_id: Uuid,
@@ -144,33 +146,36 @@ async fn search_state(
         None => Vec::new(),
     };
 
-    type CountRow = (Uuid, Uuid, i32, i64, SqlJson<Vec<Counted>>, i32);
+    type CountRow = (Uuid, Uuid, i32, i64, SqlJson<Vec<Counted>>, i32, bool);
     let count: Option<CountRow> = sqlx::query_as(
         "SELECT c.id, c.brief_id, b.version, extract(epoch FROM c.created_at)::bigint,
-                c.locations, c.credits_used
+                c.locations, c.credits_used, EXISTS (SELECT 1 FROM pull p WHERE p.count_id = c.id)
          FROM search_count c JOIN brief b ON b.id = c.brief_id
-         WHERE c.role_id = $1 AND c.org_id = $2 AND c.locations IS NOT NULL
+         WHERE c.role_id = $1 AND c.org_id = $2 AND c.locations IS NOT NULL AND c.search_id IS NULL
          ORDER BY c.created_at DESC LIMIT 1",
     )
     .bind(role_id)
     .bind(org_id)
     .fetch_optional(pool)
     .await?;
-    let count = count.map(|(id, brief_id, version, at, locs, credits)| CountView {
-        id,
-        brief_version: version,
-        counted_at: at,
-        stale: brief.as_ref().map(|b| b.0) != Some(brief_id),
-        locations: locs
-            .0
-            .into_iter()
-            .map(|c| CountLocation {
-                label: c.label,
-                total: c.total,
-            })
-            .collect(),
-        credits_used: credits,
-    });
+    let count = count.map(
+        |(id, brief_id, version, at, locs, credits, pulled)| CountView {
+            id,
+            brief_version: version,
+            counted_at: at,
+            stale: brief.as_ref().map(|b| b.0) != Some(brief_id),
+            locations: locs
+                .0
+                .into_iter()
+                .map(|c| CountLocation {
+                    label: c.label,
+                    total: c.total,
+                })
+                .collect(),
+            credits_used: credits,
+            pulled,
+        },
+    );
 
     type PullRow = (
         Uuid,
@@ -185,20 +190,31 @@ async fn search_state(
         i64,
         i64,
         Vec<String>,
+        Option<String>,
     );
+    // The latest press. A press on several wider searches makes one pull per
+    // search in one transaction, so they share a time and are shown together.
     let pull: Option<PullRow> = sqlx::query_as(
-        "SELECT p.id, p.count_id, p.requested, p.locations,
-                coalesce(sum(r.records_pulled) FILTER (WHERE r.finished_at IS NOT NULL), 0),
-                coalesce(sum(r.new_candidates), 0),
-                coalesce(sum(r.left_out), 0), coalesce(sum(r.unknown_employer), 0),
-                coalesce(sum(r.credits_used), 0), count(r.finished_at),
-                coalesce(sum(r.credits_used) FILTER (WHERE r.finished_at IS NULL), 0),
+        "WITH ps AS (
+           SELECT * FROM pull WHERE role_id = $1 AND org_id = $2
+             AND created_at = (SELECT max(created_at) FROM pull WHERE role_id = $1 AND org_id = $2)
+         ), rs AS (SELECT r.* FROM run r WHERE r.pull_id IN (SELECT id FROM ps))
+         SELECT (SELECT id FROM ps ORDER BY id LIMIT 1),
+                (SELECT count_id FROM ps ORDER BY id LIMIT 1),
+                (SELECT sum(requested) FROM ps)::int, (SELECT sum(locations) FROM ps)::int,
+                (SELECT coalesce(sum(records_pulled) FILTER (WHERE finished_at IS NOT NULL), 0) FROM rs),
+                (SELECT coalesce(sum(new_candidates), 0) FROM rs),
+                (SELECT coalesce(sum(left_out), 0) FROM rs),
+                (SELECT coalesce(sum(unknown_employer), 0) FROM rs),
+                (SELECT coalesce(sum(credits_used), 0) FROM rs),
+                (SELECT count(finished_at) FROM rs),
+                (SELECT coalesce(sum(credits_used) FILTER (WHERE finished_at IS NULL), 0) FROM rs),
                 ARRAY(SELECT j.payload->>'location' FROM job j
                       WHERE j.kind = $3 AND j.status = 'failed'
-                        AND j.payload->>'pull_id' = p.id::text ORDER BY 1)
-         FROM pull p LEFT JOIN run r ON r.pull_id = p.id
-         WHERE p.role_id = $1 AND p.org_id = $2
-         GROUP BY p.id ORDER BY p.created_at DESC LIMIT 1",
+                        AND j.payload->>'pull_id' IN (SELECT id::text FROM ps) ORDER BY 1),
+                (SELECT string_agg(e.name, ' and ' ORDER BY e.slot)
+                 FROM ps JOIN extra_search e ON e.id = ps.search_id)
+         WHERE EXISTS (SELECT 1 FROM ps)",
     )
     .bind(role_id)
     .bind(org_id)
@@ -219,6 +235,7 @@ async fn search_state(
             done,
             unsaved,
             failed_locations,
+            search_name,
         )| {
             let failed = !failed_locations.is_empty();
             PullView {
@@ -238,6 +255,7 @@ async fn search_state(
                 failed,
                 failed_locations,
                 credits_unsaved: unsaved as i32,
+                search_name,
             }
         },
     );
@@ -252,6 +270,21 @@ async fn search_state(
     .fetch_one(pool)
     .await?;
 
+    // Queued or running pull jobs for this role, from any search.
+    let pulling: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM job WHERE org_id = $1 AND kind = $2
+                          AND status IN ('queued', 'running') AND payload->>'role_id' = $3::text)",
+    )
+    .bind(org_id)
+    .bind(PULL_JOB)
+    .bind(role_id)
+    .fetch_one(pool)
+    .await?;
+    let more = match &brief {
+        Some((brief_id, _, lines)) => crate::more::views(pool, org_id, *brief_id, lines).await?,
+        None => Vec::new(),
+    };
+
     Ok(SearchState {
         brief_version: brief.as_ref().map(|b| b.1),
         lines: brief.map(|b| b.2),
@@ -260,6 +293,8 @@ async fn search_state(
         blocked: blocked.map(String::from),
         count,
         pull,
+        pulling,
+        more,
         credits_this_month,
     })
 }
@@ -321,18 +356,54 @@ pub async fn count(
         );
     }
 
+    do_count(
+        &state,
+        &pool,
+        &user,
+        role_id,
+        brief_id,
+        None,
+        &req.key,
+        |locked| plan::plan(&lines, locked),
+    )
+    .await
+}
+
+/// Which search a count is for: the brief's own (`None`) or a wider one,
+/// with the version of its widening.
+pub(crate) type CountOf = Option<(Uuid, i32)>;
+
+/// Count each place of a search, once per key, and store it. A wider search
+/// counts only people not already found for the role, so it says how many
+/// are new.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn do_count(
+    state: &AppState,
+    pool: &PgPool,
+    user: &CurrentUser,
+    role_id: Uuid,
+    brief_id: Uuid,
+    of: CountOf,
+    key: &str,
+    searches: impl FnOnce(&[Company]) -> Vec<plan::LocationSearch>,
+) -> Response {
+    let user_id = user.id;
+    let org_id = user.org_id;
     // Reserve the key first, so a second press waits instead of paying again.
     let reserved: Result<Option<Uuid>, _> = sqlx::query_scalar(
-        "INSERT INTO search_count (org_id, role_id, brief_id, created_by, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO search_count (org_id, role_id, brief_id, created_by, idempotency_key,
+                                   search_id, search_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (org_id, idempotency_key) DO NOTHING RETURNING id",
     )
-    .bind(user.org_id)
+    .bind(org_id)
     .bind(role_id)
     .bind(brief_id)
-    .bind(user.id)
-    .bind(&req.key)
-    .fetch_optional(&pool)
+    .bind(user_id)
+    .bind(key)
+    .bind(of.map(|o| o.0))
+    .bind(of.map(|o| o.1))
+    .fetch_optional(pool)
     .await;
     let count_id = match reserved {
         Ok(Some(id)) => id,
@@ -341,13 +412,13 @@ pub async fn count(
                 "SELECT locations IS NOT NULL FROM search_count
                  WHERE org_id = $1 AND idempotency_key = $2 AND role_id = $3",
             )
-            .bind(user.org_id)
-            .bind(&req.key)
+            .bind(org_id)
+            .bind(key)
             .bind(role_id)
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await;
             return match done {
-                Ok(Some(true)) => get_search(State(state), user, Path(role_id)).await,
+                Ok(Some(true)) => state_response(state, pool, org_id, role_id).await,
                 Ok(_) => refuse(StatusCode::CONFLICT, "Still counting. Wait a moment."),
                 Err(e) => server_error(e),
             };
@@ -357,14 +428,18 @@ pub async fn count(
 
     let spent = std::sync::atomic::AtomicU32::new(0);
     let result = async {
-        let locked_out = employer::locked_out(&pool, user.org_id, role_id).await?;
+        let locked_out = employer::locked_out(pool, org_id, role_id).await?;
+        let found = match of {
+            Some(_) => found_ids(pool, org_id, role_id).await?,
+            None => Vec::new(),
+        };
         let mut counted = Vec::new();
         let mut credits = 0u32;
-        for search in plan::plan(&lines, &locked_out) {
+        for search in searches(&locked_out) {
             let page = state
                 .pdl
                 .search(&SearchQuery {
-                    query: search.query.clone(),
+                    query: excluding(search.query.clone(), &found),
                     size: 1,
                     scroll_token: None,
                 })
@@ -386,12 +461,13 @@ pub async fn count(
             .bind(credits as i32)
             .execute(&mut *tx)
             .await?;
+        let of_search = of.map_or(String::new(), |(id, v)| format!(" search:{id} v{v}"));
         audit::record(
             &mut *tx,
-            user.org_id,
-            Some(user.id),
+            org_id,
+            Some(user_id),
             audit::action::SEARCH_COUNTED,
-            &format!("count:{count_id} role:{role_id} credits:{credits}"),
+            &format!("count:{count_id} role:{role_id} credits:{credits}{of_search}"),
         )
         .await?;
         tx.commit().await?;
@@ -399,7 +475,7 @@ pub async fn count(
     }
     .await;
     match result {
-        Ok(()) => get_search(State(state), user, Path(role_id)).await,
+        Ok(()) => state_response(state, pool, org_id, role_id).await,
         Err(e) => {
             tracing::warn!(error = %format!("{e:#}"), "count failed");
             // Keep what was spent before the failure in this month's total;
@@ -409,12 +485,12 @@ pub async fn count(
                 sqlx::query("UPDATE search_count SET credits_used = $2 WHERE id = $1")
                     .bind(count_id)
                     .bind(spent)
-                    .execute(&pool)
+                    .execute(pool)
                     .await
             } else {
                 sqlx::query("DELETE FROM search_count WHERE id = $1")
                     .bind(count_id)
-                    .execute(&pool)
+                    .execute(pool)
                     .await
             };
             refuse(
@@ -422,6 +498,46 @@ pub async fn count(
                 "People Data Labs could not count just now. Try again in a minute.",
             )
         }
+    }
+}
+
+/// The search step as JSON, after a change.
+pub(crate) async fn state_response(
+    state: &AppState,
+    pool: &PgPool,
+    org_id: Uuid,
+    role_id: Uuid,
+) -> Response {
+    match search_state(state, pool, org_id, role_id).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+/// People already found for this role, by provider id, newest first.
+pub(crate) async fn found_ids(
+    pool: &PgPool,
+    org_id: Uuid,
+    role_id: Uuid,
+) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT p.pdl_id FROM candidacy c JOIN person p ON p.id = c.person_id
+         WHERE c.role_id = $1 AND c.org_id = $2 AND p.pdl_id IS NOT NULL
+         ORDER BY p.last_seen DESC NULLS LAST, p.id LIMIT $3",
+    )
+    .bind(role_id)
+    .bind(org_id)
+    .bind(MAX_EXCLUDED as i64)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The query, leaving out people already found.
+pub(crate) fn excluding(query: Value, found: &[String]) -> Value {
+    if found.is_empty() {
+        query
+    } else {
+        serde_json::json!({"bool": {"must": [query], "must_not": [{"terms": {"id": found}}]}})
     }
 }
 
@@ -457,7 +573,8 @@ pub async fn pull(
     };
     type CountedRow = (Uuid, Option<SqlJson<Vec<Counted>>>);
     let count: Result<Option<CountedRow>, _> = sqlx::query_as(
-        "SELECT brief_id, locations FROM search_count WHERE id = $1 AND role_id = $2 AND org_id = $3",
+        "SELECT brief_id, locations FROM search_count
+         WHERE id = $1 AND role_id = $2 AND org_id = $3 AND search_id IS NULL",
     )
     .bind(req.count_id)
     .bind(role_id)
@@ -548,6 +665,8 @@ pub async fn pull(
                 location: c.label.clone(),
                 query: c.query.clone(),
                 size: *size,
+                search_id: None,
+                widen: None,
             })?;
             sqlx::query("INSERT INTO job (org_id, kind, payload) VALUES ($1, $2, $3)")
                 .bind(user.org_id)
@@ -588,6 +707,11 @@ pub struct PullJob {
     pub location: String,
     pub query: Value,
     pub size: u32,
+    /// The wider search this is for, and its widening as it was pulled.
+    #[serde(default)]
+    pub search_id: Option<Uuid>,
+    #[serde(default)]
+    pub widen: Option<Widen>,
 }
 
 /// Runs queued pulls against a people source.
@@ -615,29 +739,20 @@ impl<S: PeopleSource + 'static> JobHandler for PullHandler<S> {
             .bind(job.org_id)
             .fetch_one(&self.pool)
             .await?;
-            let (_, _, lines) = brief.lines();
+            let (_, _, brief_lines) = brief.lines();
+            let lines = match &p.widen {
+                Some(w) => crate::more::apply(&brief_lines, w).1,
+                None => brief_lines,
+            };
             let locked = employer::locked_out(&self.pool, job.org_id, p.role_id).await?;
             let base = plan::plan(&lines, &locked)
                 .into_iter()
                 .find(|s| s.label == p.location)
                 .map(|s| s.query)
                 .unwrap_or(p.query);
-            // Never pay again for people already found for this role, newest first.
-            let found: Vec<String> = sqlx::query_scalar(
-                "SELECT p.pdl_id FROM candidacy c JOIN person p ON p.id = c.person_id
-                 WHERE c.role_id = $1 AND c.org_id = $2 AND p.pdl_id IS NOT NULL
-                 ORDER BY p.last_seen DESC NULLS LAST, p.id LIMIT $3",
-            )
-            .bind(p.role_id)
-            .bind(job.org_id)
-            .bind(MAX_EXCLUDED as i64)
-            .fetch_all(&self.pool)
-            .await?;
-            let query = if found.is_empty() {
-                base
-            } else {
-                serde_json::json!({"bool": {"must": [base], "must_not": [{"terms": {"id": found}}]}})
-            };
+            // Never pay again for people already found for this role.
+            let found = found_ids(&self.pool, job.org_id, p.role_id).await?;
+            let query = excluding(base, &found);
             let req = SearchRequest {
                 org_id: job.org_id,
                 actor_id: p.actor_id,
@@ -653,6 +768,7 @@ impl<S: PeopleSource + 'static> JobHandler for PullHandler<S> {
                 },
                 pull_id: Some(p.pull_id),
                 location: Some(p.location),
+                search_id: p.search_id,
             };
             run_search(&self.pool, self.source.as_ref(), &req).await?;
             // Rank the new people straight away (the ranker skips anyone ranked).

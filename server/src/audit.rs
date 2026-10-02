@@ -21,7 +21,10 @@ pub mod action {
     pub const BRIEF_SAVED: &str = "brief.save";
     pub const BRIEF_CONFIRMED: &str = "brief.confirm";
     pub const SEARCH_COUNTED: &str = "search.count";
+    /// Round 2, retired 2 Oct 2026 for More searches. Kept so old audit rows read.
     pub const SEARCH_RETUNED: &str = "search.retune";
+    pub const SEARCHES_SUGGESTED: &str = "search.suggest";
+    pub const SEARCH_WIDENED: &str = "search.widen";
     pub const SEARCH_PULLED: &str = "search.pull";
     pub const CANDIDATES_RANKED: &str = "candidates.rank";
     pub const CANDIDATE_SHORTLISTED: &str = "candidate.shortlist";

@@ -25,4 +25,8 @@ failed_locations: Array<string>,
  * Credits paid for people who were never saved (a location failed after
  * the provider charged). Already counted in credits_used.
  */
-credits_unsaved: number, };
+credits_unsaved: number, 
+/**
+ * The wider search this pull came from, or `None` for the brief.
+ */
+search_name: string | null, };

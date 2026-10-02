@@ -227,6 +227,7 @@ function Person({
           {p.do_not_contact && <span className="flag stop">Do not contact</span>}
           {p.known && <span className="flag known">{p.known}</span>}
           {p.employer_unknown && <span className="flag emp">Check employer</span>}
+          {p.found_by && <span className="flag by">Found by: {p.found_by}</span>}
           {p.stale_rank && (
             <span className="flag emp" title="Scored against an older brief. A re-rank is due.">
               Older brief

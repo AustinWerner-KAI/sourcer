@@ -8,12 +8,27 @@ import type { RoleDetail } from "../api/types/RoleDetail";
 import type { ToolStatus } from "../api/types/ToolStatus";
 import { Steps } from "./Briefs";
 
-const EMPLOYER_OPTIONS = [
+export const EMPLOYER_OPTIONS = [
   "Payments and neobanks",
   "Crypto and digital assets",
   "Trading firms",
   "E-commerce",
   "Adtech",
+  "Banks",
+  "Insurance",
+  "Asset and wealth managers",
+  "Exchanges and market infrastructure",
+  "VC and private equity",
+  "Cybersecurity vendors",
+  "Cloud and SaaS",
+  "Big tech and platforms",
+  "IT services",
+  "Consulting and Big Four",
+  "Telecoms",
+  "Gaming and betting",
+  "Government and defence",
+  "Energy and commodities",
+  "Healthcare",
 ];
 const TOOL_CHOICES: { value: ToolStatus; label: string }[] = [
   { value: "required", label: "Required" },
