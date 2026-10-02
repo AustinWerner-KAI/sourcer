@@ -19,6 +19,8 @@ enum SendMode {
     LostAnswer,
     /// Fails without sending.
     Fail,
+    /// Outlook refuses the email (400) and does not send it.
+    Refuse,
 }
 
 #[derive(Clone)]
@@ -30,6 +32,7 @@ struct Msg {
     conv: String,
     draft: bool,
     reply_to: Option<String>,
+    folder: &'static str,
 }
 
 struct Fake {
@@ -96,6 +99,7 @@ async fn create(Shared(f): Shared<FakeState>, Json(b): Json<Value>) -> axum::res
         conv,
         draft: true,
         reply_to: None,
+        folder: "drafts-id",
     };
     Json(add(&mut f, m)).into_response()
 }
@@ -113,6 +117,7 @@ async fn create_reply(Shared(f): Shared<FakeState>, UrlPath(id): UrlPath<String>
         conv: original.conv,
         draft: true,
         reply_to: Some(id),
+        folder: "drafts-id",
     };
     Json(add(&mut f, m))
 }
@@ -144,9 +149,13 @@ async fn send_msg(
     if f.send_mode == SendMode::Fail {
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR;
     }
+    if f.send_mode == SendMode::Refuse {
+        return axum::http::StatusCode::BAD_REQUEST;
+    }
     let m = f.msgs.get_mut(&id).unwrap();
     assert!(m.draft, "sent twice");
     m.draft = false;
+    m.folder = "sent-id";
     f.sent.push(id);
     if f.send_mode == SendMode::LostAnswer {
         return axum::http::StatusCode::INTERNAL_SERVER_ERROR;
@@ -161,7 +170,7 @@ async fn get_msg(
     use axum::response::IntoResponse;
     let f = f.lock().unwrap();
     match f.msgs.get(&id) {
-        Some(m) => Json(json!({"isDraft": m.draft})).into_response(),
+        Some(m) => Json(json!({"isDraft": m.draft, "parentFolderId": m.folder})).into_response(),
         None => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -203,6 +212,10 @@ async fn fake_outlook(me: &str) -> (String, FakeState) {
         )
         .route("/v1.0/me/messages/:id/createReply", post(create_reply))
         .route("/v1.0/me/messages/:id/send", post(send_msg))
+        .route(
+            "/v1.0/me/mailFolders/drafts",
+            get(|| async { Json(json!({"id": "drafts-id"})) }),
+        )
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -917,4 +930,185 @@ async fn stop_during_a_send_waits_for_it_and_keeps_the_record_straight() {
         state_of(&pool, outreach).await,
         ("active".into(), None, "contacted".into())
     );
+}
+
+#[tokio::test]
+async fn unclear_or_refused_sends_never_go_twice_and_never_block() {
+    let Some(pool) = testutil::fresh_pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (base, fake) = fake_outlook("").await;
+    let (app, mail) = mail_app(pool.clone(), &base);
+    let (sender_id, me, email) = connected(&pool, &mail, org).await;
+    fake.lock().unwrap().me = email;
+    let sender = Sender {
+        pool: pool.clone(),
+        mail: mail.clone(),
+    };
+    let t0 = at(MONDAY);
+    let mins = chrono::Duration::minutes;
+
+    // Outlook refuses the send itself: the draft goes, the step waits, and
+    // after three refusals the sequence stops. Nothing else is held up.
+    let (_, refused) = approved(
+        &pool,
+        org,
+        sender_id,
+        &format!("k-{}@mail.example", Uuid::new_v4()),
+    )
+    .await;
+    fake.lock().unwrap().send_mode = SendMode::Refuse;
+    sender.tick(t0).await.unwrap();
+    assert_eq!(fake.lock().unwrap().msgs.len(), 0, "refused draft removed");
+    sender.tick(t0 + mins(31)).await.unwrap();
+    sender.tick(t0 + mins(92)).await.unwrap();
+    let (status, reason, _) = state_of(&pool, refused).await;
+    assert_eq!(status, "stopped");
+    assert!(reason.unwrap().contains("refused"));
+    fake.lock().unwrap().send_mode = SendMode::Ok;
+    let (_, next) = approved(
+        &pool,
+        org,
+        sender_id,
+        &format!("l-{}@mail.example", Uuid::new_v4()),
+    )
+    .await;
+    sender.tick(t0 + mins(93)).await.unwrap();
+    assert_eq!(state_of(&pool, next).await.0, "active");
+
+    // On its way (not in Drafts, not sent): never sent again, and after an
+    // hour a person decides. The person counts as contacted for good.
+    let to3 = format!("m-{}@mail.example", Uuid::new_v4());
+    let (c3, transit) = approved(&pool, org, sender_id, &to3).await;
+    fake.lock().unwrap().send_mode = SendMode::Fail;
+    sender.tick(t0 + mins(100)).await.unwrap();
+    fake.lock().unwrap().send_mode = SendMode::Ok;
+    {
+        let mut f = fake.lock().unwrap();
+        let id = f.msgs.iter().find(|(_, m)| m.draft).unwrap().0.clone();
+        f.msgs.get_mut(&id).unwrap().folder = "outbox-id";
+    }
+    sender.tick(t0 + mins(110)).await.unwrap();
+    assert_eq!(state_of(&pool, transit).await.0, "approved", "waits");
+    sender.tick(t0 + mins(170)).await.unwrap();
+    let (status, reason, state) = state_of(&pool, transit).await;
+    assert_eq!((status.as_str(), state.as_str()), ("stopped", "contacted"));
+    assert!(reason.unwrap().contains("Could not confirm"));
+    assert_eq!(fake.lock().unwrap().sent.len(), 1, "only the one that went");
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/candidates/{c3}/outreach?fresh=true"),
+            &me,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT, "never drafted again");
+    // If it did go and they answer, the reply still shows.
+    fake.lock()
+        .unwrap()
+        .inbox
+        .push(json!({"from": {"emailAddress": {"address": to3}},
+        "subject": "Re: IAM role, Dubai", "conversationId": "x", "isDraft": false,
+        "receivedDateTime": "2030-01-08T07:00:00Z"}));
+    sender
+        .check_replies(at("2030-01-08T08:00:00Z"))
+        .await
+        .unwrap();
+    assert_eq!(state_of(&pool, transit).await.2, "replied");
+}
+
+#[tokio::test]
+async fn a_reply_to_a_stopped_sequence_still_shows() {
+    let Some(pool) = testutil::fresh_pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (base, fake) = fake_outlook("").await;
+    let (app, mail) = mail_app(pool.clone(), &base);
+    let (sender_id, me, email) = connected(&pool, &mail, org).await;
+    fake.lock().unwrap().me = email;
+    let sender = Sender {
+        pool: pool.clone(),
+        mail: mail.clone(),
+    };
+    let to = format!("n-{}@mail.example", Uuid::new_v4());
+    let (candidacy, outreach) = approved(&pool, org, sender_id, &to).await;
+    sender.tick(at(MONDAY)).await.unwrap();
+    // Stopped by hand after the first email.
+    let version: i32 = sqlx::query_scalar("SELECT version FROM outreach WHERE id = $1")
+        .bind(outreach)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/candidates/{candidacy}/outreach/stop"),
+            &me,
+            json!({"version": version}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    fake.lock()
+        .unwrap()
+        .inbox
+        .push(json!({"from": {"emailAddress": {"address": to}},
+        "subject": "Re: IAM role, Dubai", "conversationId": "other", "isDraft": false,
+        "receivedDateTime": "2030-01-08T07:00:00Z"}));
+    sender
+        .check_replies(at("2030-01-08T08:00:00Z"))
+        .await
+        .unwrap();
+    let (status, reason, state) = state_of(&pool, outreach).await;
+    assert_eq!((status.as_str(), state.as_str()), ("stopped", "replied"));
+    assert!(
+        reason.unwrap().starts_with("Stopped by"),
+        "the stop reason is kept"
+    );
+    let v = json_body(send(&app, get_req("/api/today", Some(&me))).await).await;
+    assert_eq!(v["replies"][0]["candidacy_id"], candidacy.to_string());
+}
+
+#[tokio::test]
+async fn reject_during_a_send_waits_for_it() {
+    let Some(pool) = testutil::fresh_pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (base, fake) = fake_outlook("").await;
+    let (app, mail) = mail_app(pool.clone(), &base);
+    let (sender_id, me, email) = connected(&pool, &mail, org).await;
+    {
+        let mut f = fake.lock().unwrap();
+        f.me = email;
+        f.send_ms = 800;
+    }
+    let (candidacy, outreach) = approved(
+        &pool,
+        org,
+        sender_id,
+        &format!("o-{}@mail.example", Uuid::new_v4()),
+    )
+    .await;
+    let sender = Sender {
+        pool: pool.clone(),
+        mail: mail.clone(),
+    };
+    let sending = tokio::spawn(async move { sender.tick(at(MONDAY)).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let row: Value = json!({"id": candidacy.to_string(), "version": sqlx::query_scalar::<_, i32>(
+        "SELECT version FROM candidacy WHERE id = $1").bind(candidacy).fetch_one(&pool).await.unwrap()});
+    let res = send(&app, decide_req(&me, &row, "reject", Some("FIT"))).await;
+    sending.await.unwrap();
+    // No deadlock: the send finished and was recorded; the reject, read before
+    // the send, finds the person changed and asks for a reload.
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(fake.lock().unwrap().sent.len(), 1);
+    assert_eq!(state_of(&pool, outreach).await.2, "contacted");
 }

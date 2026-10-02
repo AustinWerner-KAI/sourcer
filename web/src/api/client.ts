@@ -29,6 +29,7 @@ import type { OutreachView } from "./types/OutreachView";
 import type { OutreachStepEdit } from "./types/OutreachStepEdit";
 import type { OutreachSettings } from "./types/OutreachSettings";
 import type { Controls } from "./types/Controls";
+import type { ControlsChange } from "./types/ControlsChange";
 import type { ClientUpdate } from "./types/ClientUpdate";
 import type { DncEntry } from "./types/DncEntry";
 import type { DncList } from "./types/DncList";
@@ -186,7 +187,8 @@ export const api = {
   saveOutreachSettings: (s: OutreachSettings) => send<OutreachSettings>("PUT", "/api/me/outreach", s),
 
   controls: () => get<Controls>("/api/admin/controls"),
-  saveControls: (c: Controls) => send<Controls>("PUT", "/api/admin/controls", c),
+  /** Only the switches that change, so two admins never undo each other. */
+  saveControls: (c: ControlsChange) => send<Controls>("PUT", "/api/admin/controls", c),
   dnc: (q: string, page: number) =>
     get<DncList>(`/api/admin/do-not-contact?q=${encodeURIComponent(q)}&page=${page}`),
   /** Permanent: there is no way to remove an entry. */
