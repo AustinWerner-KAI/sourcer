@@ -54,6 +54,11 @@ async fn json_body(res: Response<Body>) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 
+async fn body_text(res: Response<Body>) -> String {
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8_lossy(&body).into_owned()
+}
+
 /// A stand-in for Microsoft: the token endpoint and Graph `/me`.
 async fn fake_microsoft(email: String, oid: String) -> String {
     let app = Router::new()
