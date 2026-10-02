@@ -313,6 +313,7 @@ struct Row {
     sent_at: Option<chrono::DateTime<chrono::Utc>>,
     in_pipeline: bool,
     email_status: Option<String>,
+    found_by: Option<String>,
 }
 
 /// Everything the list shows, including the live known check. `{filter}` and
@@ -320,6 +321,7 @@ struct Row {
 const ROW_SELECT: &str = "
 SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employer,
        p.location, p.linkedin_url, c.tier, c.rank, c.evidence, c.employer_unknown, c.reason,
+       (SELECT e.name FROM extra_search e WHERE e.id = c.search_id) AS found_by,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'work_email') AS has_email,
        EXISTS (SELECT 1 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone') AS has_phone,
        ARRAY(SELECT k.kind::text || ':' || k.value FROM contact k
@@ -433,6 +435,7 @@ impl From<Row> for CandidateRow {
             known,
             do_not_contact: r.dnc,
             employer_unknown: r.employer_unknown,
+            found_by: r.found_by,
             has_work_email: r.has_email,
             has_phone: r.has_phone,
             contacts: if r.dnc {
