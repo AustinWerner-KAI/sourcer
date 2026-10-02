@@ -4,4 +4,12 @@ export type RoleSummary = { id: string, title: string, client_name: string | nul
 /**
  * "none", "draft" or "confirmed".
  */
-brief_state: string, };
+brief_state: string, 
+/**
+ * Closed: no searching, no more emails.
+ */
+closed: boolean, 
+/**
+ * Email sequences approved and still going, which closing would stop.
+ */
+active_sequences: number, };

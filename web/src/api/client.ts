@@ -126,6 +126,8 @@ export const api = {
   /** Admins only: name, domain and the off-limits flag. */
   updateClient: (id: string, c: ClientUpdate) => send<Client>("PATCH", `/api/clients/${id}`, c),
   roles: () => get<RoleSummary[]>("/api/roles"),
+  /** Close a role (no searching, no more emails) or reopen it. Returns every role. */
+  closeRole: (id: string, closed: boolean) => send<RoleSummary[]>("POST", `/api/roles/${id}/close`, { closed }),
   role: (id: string) => get<RoleDetail>(`/api/roles/${id}`),
   createRole: (r: NewRole) => send<RoleDetail>("POST", "/api/roles", r),
   updateRole: (id: string, r: RoleUpdate) => send<RoleDetail>("PATCH", `/api/roles/${id}`, r),

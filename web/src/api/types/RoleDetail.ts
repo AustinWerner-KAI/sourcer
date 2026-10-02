@@ -17,4 +17,8 @@ locked_out: Array<LockedOut>,
 /**
  * The Recruitly job this role came from or is linked to.
  */
-recruitly_job: RecruitlyLink | null, };
+recruitly_job: RecruitlyLink | null, 
+/**
+ * Closed: no searching, no more emails.
+ */
+closed: boolean, };
