@@ -238,12 +238,12 @@ pub fn client_mentions(text: &str, companies: &[Company]) -> Vec<String> {
     let mut found = Vec::new();
     for c in companies {
         let name = normalise_name(&c.name);
-        let name_hit = name.chars().count() >= 3 && plain.contains(&format!(" {name} "));
+        let name_hit = name.chars().count() >= 2 && plain.contains(&format!(" {name} "));
         let stem = c
             .domain
             .as_deref()
             .and_then(employer::normalise_domain)
-            .and_then(|d| d.split('.').next().map(str::to_string))
+            .and_then(|d| domain_stem(&d))
             .filter(|s| s.chars().count() >= 4);
         let domain_hit = stem.is_some_and(|s| squashed.contains(&s));
         if (name_hit || domain_hit) && !found.contains(&c.name) {
@@ -251,6 +251,25 @@ pub fn client_mentions(text: &str, companies: &[Company]) -> Vec<String> {
         }
     }
     found
+}
+
+/// The name part of a web address: "acme" from "careers.acme.co.uk".
+fn domain_stem(domain: &str) -> Option<String> {
+    const TWO_PART: [&str; 10] = [
+        "co.uk", "org.uk", "ac.uk", "com.au", "co.jp", "com.sg", "com.hk", "co.za", "com.br",
+        "co.in",
+    ];
+    let labels: Vec<&str> = domain.split('.').collect();
+    let suffix =
+        if labels.len() >= 3 && TWO_PART.contains(&labels[labels.len() - 2..].join(".").as_str()) {
+            2
+        } else {
+            1
+        };
+    labels
+        .len()
+        .checked_sub(suffix + 1)
+        .map(|i| labels[i].replace('-', ""))
 }
 
 fn escape(s: &str) -> String {
@@ -468,15 +487,20 @@ async fn view(
     .bind(id)
     .fetch_all(pool)
     .await?;
-    // The sender's signature, not the viewer's.
+    // The sender's signature, not the viewer's. Once approved, the copy taken
+    // at approval, so a later edit in Settings never changes approved emails.
     let signature: String = sqlx::query_scalar(
-        "SELECT u.signature FROM outreach o JOIN app_user u ON u.id = o.sender_id WHERE o.id = $1",
+        "SELECT coalesce(o.signature, u.signature) FROM outreach o
+         JOIN app_user u ON u.id = o.sender_id WHERE o.id = $1",
     )
     .bind(id)
     .fetch_one(pool)
     .await?;
     let (problems, notes) = if status == OutreachStatus::Draft {
-        checks(pool, org_id, candidacy, &ctx, &to_email, &signature, &steps).await?
+        checks(
+            pool, org_id, candidacy, &ctx, &sender, &to_email, &signature, &steps,
+        )
+        .await?
     } else {
         (Vec::new(), Vec::new())
     };
@@ -507,11 +531,13 @@ async fn view(
 }
 
 /// What stops approval, and what is only worth a look.
+#[allow(clippy::too_many_arguments)]
 async fn checks(
     pool: &PgPool,
     org_id: Uuid,
     candidacy: Uuid,
     ctx: &Context,
+    sender: &str,
     to_email: &str,
     signature: &str,
     steps: &[StepRow],
@@ -519,17 +545,34 @@ async fn checks(
     let mut problems = Vec::new();
     let mut notes = Vec::new();
     let companies = employer::locked_out(pool, org_id, ctx.role_id).await?;
+    let what = |named: &[String]| {
+        let client = companies
+            .iter()
+            .any(|c| c.hiring && named.contains(&c.name));
+        let who = if client {
+            "the client"
+        } else {
+            "an off-limits company"
+        };
+        format!("{who} ({})", named.join(", "))
+    };
     for (step, _, subject, body, _) in steps {
         let named = client_mentions(&format!("{subject}\n{body}"), &companies);
         if !named.is_empty() {
-            problems.push(format!(
-                "Email {step} names the client ({}). Take it out.",
-                named.join(", ")
-            ));
+            problems.push(format!("Email {step} names {}. Take it out.", what(&named)));
         }
     }
+    let named = client_mentions(signature, &companies);
+    if !named.is_empty() {
+        problems.push(format!(
+            "The signature names {}. Change it in Settings.",
+            what(&named)
+        ));
+    }
     if signature.trim().is_empty() {
-        problems.push("Add your email signature in Settings first.".into());
+        problems.push(format!(
+            "{sender} has no email signature yet. Add it in Settings first."
+        ));
     }
     let dnc: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM do_not_contact WHERE org_id = $1 AND identifier = lower($2))",
@@ -618,6 +661,9 @@ pub struct StartQuery {
     /// Replace an existing draft (or a stopped sequence) with a fresh one.
     #[serde(default)]
     pub fresh: bool,
+    /// The draft version the screen showed, so a fresh draft never replaces
+    /// newer edits or an approval made in another window.
+    pub version: Option<i32>,
 }
 
 /// POST /api/candidates/:id/outreach: draft the three emails.
@@ -692,20 +738,27 @@ pub async fn start(
     );
     let result = async {
         let mut tx = pool.begin().await?;
-        let id: Uuid = sqlx::query_scalar(
+        // Only a draft or a stopped sequence is replaced, never an approval.
+        let id: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO outreach (org_id, candidacy_id, sender_id, to_email)
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (candidacy_id) DO UPDATE SET sender_id = $3, to_email = $4,
                     status = 'draft', stop_reason = NULL, approved_by = NULL, approved_at = NULL,
-                    version = outreach.version + 1, updated_at = now()
+                    signature = NULL, version = outreach.version + 1, updated_at = now()
+             WHERE outreach.status IN ('draft', 'stopped')
+               AND ($5::int IS NULL OR outreach.version = $5)
              RETURNING id",
         )
         .bind(user.org_id)
         .bind(candidacy)
         .bind(user.id)
         .bind(&to)
-        .fetch_one(&mut *tx)
+        .bind(q.version)
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some(id) = id else {
+            return anyhow::Ok(false);
+        };
         sqlx::query("DELETE FROM outreach_step WHERE outreach_id = $1")
             .bind(id)
             .execute(&mut *tx)
@@ -740,11 +793,15 @@ pub async fn start(
         )
         .await?;
         tx.commit().await?;
-        anyhow::Ok(())
+        anyhow::Ok(true)
     }
     .await;
     match result {
-        Ok(()) => answer(&pool, &user, candidacy).await,
+        Ok(true) => answer(&pool, &user, candidacy).await,
+        Ok(false) => refuse(
+            StatusCode::CONFLICT,
+            "These emails changed in another window. Reload to see the latest.",
+        ),
         Err(e) => server_error(e),
     }
 }
@@ -854,7 +911,8 @@ pub async fn approve(
     let result = async {
         let mut tx = pool.begin().await?;
         let done = sqlx::query(
-            "UPDATE outreach SET status = 'approved', approved_by = $3, approved_at = now(),
+            "UPDATE outreach o SET status = 'approved', approved_by = $3, approved_at = now(),
+                    signature = (SELECT u.signature FROM app_user u WHERE u.id = o.sender_id),
                     version = version + 1, updated_at = now()
              WHERE candidacy_id = $1 AND org_id = $2 AND status = 'draft' AND version = $4",
         )
@@ -868,7 +926,9 @@ pub async fn approve(
         if done == 0 {
             return anyhow::Ok(false);
         }
-        sqlx::query(
+        // The person must still be waiting on these emails; if not, nothing
+        // is approved (the transaction is dropped).
+        let moved = sqlx::query(
             "UPDATE candidacy SET state = 'approved', sequence_approved_by = $2,
                     sequence_approved_at = now(), version = version + 1
              WHERE id = $1 AND state = 'drafted'",
@@ -876,7 +936,11 @@ pub async fn approve(
         .bind(candidacy)
         .bind(user.id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        if moved == 0 {
+            return anyhow::Ok(false);
+        }
         audit::record(
             &mut *tx,
             user.org_id,
@@ -1102,6 +1166,23 @@ mod tests {
         );
         assert!(client_mentions("A north-facing wind capital role", c).is_empty());
         assert!(client_mentions("A role in Dubai", c).is_empty());
+        // The name part of a web address, not a subdomain or a country suffix.
+        assert_eq!(
+            domain_stem("careers.acme-group.co.uk").as_deref(),
+            Some("acmegroup")
+        );
+        assert_eq!(domain_stem("acme.com").as_deref(), Some("acme"));
+        assert_eq!(domain_stem("com"), None);
+        // Short names count too, as whole words only.
+        let short = Company {
+            id: Uuid::nil(),
+            name: "EY".into(),
+            domain: None,
+            hiring: true,
+        };
+        let c = std::slice::from_ref(&short);
+        assert_eq!(client_mentions("A role at EY in Dubai", c), ["EY"]);
+        assert!(client_mentions("Hey Sam, keen to hear", c).is_empty());
     }
 
     #[test]
