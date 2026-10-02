@@ -32,6 +32,9 @@ ALTER TABLE outreach_step ADD COLUMN graph_id text;
 -- Set just before the send call. A step with this set and no sent_at is
 -- checked against Outlook before anything else happens, so nothing goes twice.
 ALTER TABLE outreach_step ADD COLUMN sending_since timestamptz;
+-- Outlook could not say whether it went (deleted, or never arrived). It is
+-- treated as sent: the person is never emailed for this role again.
+ALTER TABLE outreach_step ADD COLUMN unconfirmed_at timestamptz;
 
 -- Outlook refused this email this many times; it is tried again after
 -- retry_after, and the sequence stops after three.

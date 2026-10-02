@@ -38,6 +38,8 @@ pub const REPLY_EVERY: Duration = Duration::from_secs(15 * 60);
 pub const TICK: Duration = Duration::from_secs(60);
 /// A send marked longer ago than this is checked against Outlook.
 const STUCK_MINUTES: i64 = 5;
+/// An email neither in Drafts nor in Sent Items this long is left to a person.
+const UNCONFIRMED_MINUTES: i64 = 60;
 /// Replies are watched for this long after the last email.
 const WATCH_DAYS: i64 = 30;
 /// Reply checks overlap the last one by this much, so nothing slips between.
@@ -236,6 +238,13 @@ impl Sender {
         let mut lock: Option<sqlx::pool::PoolConnection<sqlx::Postgres>> = None;
         let mut last_replies: Option<std::time::Instant> = None;
         loop {
+            // The lock lives on its connection: if that dropped (a database
+            // restart), the lock went with it and is taken again.
+            if let Some(conn) = lock.as_mut() {
+                if sqlx::query("SELECT 1").execute(&mut **conn).await.is_err() {
+                    lock = None;
+                }
+            }
             if lock.is_none() {
                 lock = self.take_lock().await;
             }
@@ -485,8 +494,17 @@ impl Sender {
         if paused || !in_hours(clock(now, started)) {
             return Ok(Gate::Wait);
         }
-        // A failure here leaves the mark, and the next tick asks Outlook.
-        self.mail.send(d.sender_id, token, graph_id).await?;
+        if let Err(e) = self.mail.send(d.sender_id, token, graph_id).await {
+            if refused(&e) {
+                // Outlook said no to this email: it did not go. Remove the
+                // draft so the step can be tried again later, or stopped.
+                drop(tx);
+                let _ = self.mail.delete(d.sender_id, token, graph_id).await;
+                self.clear(d.step_id).await?;
+            }
+            // Otherwise the mark stays, and the next tick asks Outlook.
+            return Err(e);
+        }
         finish_in(&mut tx, d.step_id, clock(now, started)).await?;
         tx.commit().await?;
         Ok(Gate::Sent)
@@ -547,11 +565,13 @@ impl Sender {
         started: std::time::Instant,
     ) -> std::collections::HashSet<Uuid> {
         let mut busy = std::collections::HashSet::new();
-        let stuck: Vec<(Uuid, Option<String>)> = match sqlx::query_as(
-            "SELECT id, graph_id FROM outreach_step
-             WHERE sent_at IS NULL AND sending_since < $1",
+        let stuck: Vec<(Uuid, Option<String>, DateTime<Utc>)> = match sqlx::query_as(
+            "SELECT id, graph_id, sending_since FROM outreach_step
+             WHERE sent_at IS NULL AND sending_since < $1
+               AND (retry_after IS NULL OR retry_after <= $2)",
         )
         .bind(now - chrono::Duration::minutes(STUCK_MINUTES))
+        .bind(now)
         .fetch_all(&self.pool)
         .await
         {
@@ -561,13 +581,19 @@ impl Sender {
                 return busy;
             }
         };
-        for (step_id, graph_id) in stuck {
-            match self.recover_one(step_id, graph_id, now, started).await {
-                Ok(sender) => {
-                    busy.insert(sender);
-                }
+        for (step_id, graph_id, since) in stuck {
+            let d = match self.due_of(step_id).await {
+                Ok(d) => d,
                 Err(e) => {
-                    tracing::warn!(step = %step_id, error = %e, "cannot settle a half-sent email yet")
+                    tracing::warn!(step = %step_id, error = %e, "cannot settle a half-sent email yet");
+                    continue;
+                }
+            };
+            busy.insert(d.sender_id);
+            if let Err(e) = self.recover_one(&d, graph_id, since, now, started).await {
+                tracing::warn!(step = %step_id, error = %e, "cannot settle a half-sent email yet");
+                if let Err(e) = self.held_back(&d, &e, clock(now, started)).await {
+                    tracing::warn!(error = %e, "could not record the failed send");
                 }
             }
         }
@@ -576,32 +602,55 @@ impl Sender {
 
     async fn recover_one(
         &self,
-        step_id: Uuid,
+        d: &Due,
         graph_id: Option<String>,
+        since: DateTime<Utc>,
         now: DateTime<Utc>,
         started: std::time::Instant,
-    ) -> Result<Uuid, MailError> {
-        let d = self.due_of(step_id).await?;
+    ) -> Result<(), MailError> {
         let Some(graph_id) = graph_id else {
             // Nothing reached Outlook.
-            self.clear(step_id).await?;
-            return Ok(d.sender_id);
+            self.clear(d.step_id).await?;
+            return Ok(());
         };
         let token = self.mail.access_token(&self.pool, d.sender_id).await?;
         match self.mail.sent_state(d.sender_id, &token, &graph_id).await? {
-            SentState::Sent => self.finish(step_id, clock(now, started)).await?,
-            SentState::Gone => {
-                // Deleted in Outlook: whether it went is unknown, so nothing
-                // more is sent and a person decides.
-                let reason = format!(
-                    "Could not confirm email {} went out. Check Outlook Sent Items.",
-                    d.step
-                );
-                self.stop(&d, &reason, "unconfirmed").await?;
-                self.clear(step_id).await?;
+            SentState::Sent => self.finish(d.step_id, clock(now, started)).await?,
+            SentState::Gone => self.unconfirmed(d).await?,
+            SentState::InTransit => {
+                // Usually on its way. Never sent again; after an hour a person decides.
+                if now - since > chrono::Duration::minutes(UNCONFIRMED_MINUTES) {
+                    self.unconfirmed(d).await?;
+                }
             }
             SentState::Draft => {
-                // It never went. Every check runs again, as for any email.
+                // It never went. Nothing is decided while sending could not happen anyway.
+                let (open, paused, disabled): (bool, bool, bool) = sqlx::query_as(
+                    "SELECT o.status IN ('approved', 'active') AND o.reply_kind IS NULL,
+                            g.sending_paused, u.disabled_at IS NOT NULL
+                     FROM outreach o JOIN org g ON g.id = o.org_id
+                     JOIN app_user u ON u.id = o.sender_id WHERE o.id = $1",
+                )
+                .bind(d.outreach_id)
+                .fetch_one(&self.pool)
+                .await?;
+                if !open || disabled {
+                    let _ = self.mail.delete(d.sender_id, &token, &graph_id).await;
+                    if disabled {
+                        self.stop(
+                            d,
+                            "Not sent: the sender's account is switched off.",
+                            "disabled",
+                        )
+                        .await?;
+                    }
+                    self.clear(d.step_id).await?;
+                    return Ok(());
+                }
+                if paused || !in_hours(clock(now, started)) {
+                    return Ok(()); // the draft waits
+                }
+                // Every check runs again, as for any email.
                 if d.step > 1 {
                     self.check_mailbox(d.sender_id, now).await?;
                 }
@@ -614,23 +663,64 @@ impl Sender {
                 .await?;
                 if let Some(p) = problems.first() {
                     let _ = self.mail.delete(d.sender_id, &token, &graph_id).await;
-                    self.stop(&d, &format!("Not sent: {p}"), "checks").await?;
-                    self.clear(step_id).await?;
-                    return Ok(d.sender_id);
+                    self.stop(d, &format!("Not sent: {p}"), "checks").await?;
+                    self.clear(d.step_id).await?;
+                    return Ok(());
                 }
-                match self
-                    .send_locked(&d, &token, &graph_id, now, started)
-                    .await?
-                {
+                match self.send_locked(d, &token, &graph_id, now, started).await? {
                     Gate::Sent | Gate::Wait => {}
                     Gate::Over => {
                         let _ = self.mail.delete(d.sender_id, &token, &graph_id).await;
-                        self.clear(step_id).await?;
+                        self.clear(d.step_id).await?;
                     }
                 }
             }
         }
-        Ok(d.sender_id)
+        Ok(())
+    }
+
+    /// Outlook cannot say whether this email went. Treat it as sent: nothing
+    /// more goes in this sequence, the person counts as contacted, and the
+    /// emails can never be drafted again. A person checks Sent Items.
+    async fn unconfirmed(&self, d: &Due) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE outreach_step SET unconfirmed_at = coalesce(sending_since, now()),
+                    sending_since = NULL
+             WHERE id = $1 AND sent_at IS NULL",
+        )
+        .bind(d.step_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE outreach SET status = 'stopped', stop_reason = $2,
+                    version = version + 1, updated_at = now()
+             WHERE id = $1 AND status IN ('approved', 'active')",
+        )
+        .bind(d.outreach_id)
+        .bind(format!(
+            "Could not confirm email {} went out. Check Outlook Sent Items.",
+            d.step
+        ))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE candidacy SET state = 'contacted', version = version + 1
+             WHERE id = $1 AND state IN ('approved', 'drafted', 'shortlisted')",
+        )
+        .bind(d.candidacy_id)
+        .execute(&mut *tx)
+        .await?;
+        audit::record(
+            &mut *tx,
+            d.org_id,
+            None,
+            audit::action::OUTREACH_STOPPED,
+            &format!("candidacy:{} reason:unconfirmed", d.candidacy_id),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Forget a send that did not happen, so the step can be tried again.
@@ -660,9 +750,10 @@ impl Sender {
     pub async fn check_replies(&self, now: DateTime<Utc>) -> anyhow::Result<()> {
         let senders: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT m.user_id FROM mailbox m JOIN outreach o ON o.sender_id = m.user_id
-             WHERE m.broken IS NULL AND o.status IN ('active', 'done') AND o.reply_kind IS NULL
+             WHERE m.broken IS NULL AND o.status IN ('active', 'done', 'stopped')
+               AND o.reply_kind IS NULL
                AND EXISTS (SELECT 1 FROM outreach_step s WHERE s.outreach_id = o.id
-                             AND s.sent_at > $1)",
+                             AND coalesce(s.sent_at, s.unconfirmed_at) > $1)",
         )
         .bind(now - chrono::Duration::days(WATCH_DAYS))
         .fetch_all(&self.pool)
@@ -687,12 +778,14 @@ impl Sender {
             return Ok(());
         };
         let threads: Vec<Thread> = sqlx::query_as(
-            "SELECT o.id AS outreach_id, o.conversation_id, o.to_email, f.sent_at AS first_sent
+            "SELECT o.id AS outreach_id, o.conversation_id, o.to_email,
+                    coalesce(f.sent_at, f.unconfirmed_at) AS first_sent
              FROM outreach o JOIN outreach_step f ON f.outreach_id = o.id AND f.step = 1
-             WHERE o.sender_id = $1 AND o.status IN ('active', 'done') AND o.reply_kind IS NULL
-               AND f.sent_at IS NOT NULL
+             WHERE o.sender_id = $1 AND o.status IN ('active', 'done', 'stopped')
+               AND o.reply_kind IS NULL
+               AND coalesce(f.sent_at, f.unconfirmed_at) IS NOT NULL
                AND EXISTS (SELECT 1 FROM outreach_step s WHERE s.outreach_id = o.id
-                             AND s.sent_at > $2)",
+                             AND coalesce(s.sent_at, s.unconfirmed_at) > $2)",
         )
         .bind(sender)
         .bind(now - chrono::Duration::days(WATCH_DAYS))
@@ -731,7 +824,7 @@ impl Sender {
         let mut tx = self.pool.begin().await?;
         let row: Option<(Uuid, Uuid, Uuid)> = sqlx::query_as(
             "UPDATE outreach SET reply_kind = $2, replied_at = $3,
-                    stop_reason = CASE WHEN status = 'done' THEN stop_reason ELSE $4 END,
+                    stop_reason = CASE WHEN status IN ('done', 'stopped') THEN stop_reason ELSE $4 END,
                     status = CASE WHEN status = 'done' THEN status ELSE 'stopped' END,
                     version = version + 1, updated_at = now()
              WHERE id = $1 AND reply_kind IS NULL

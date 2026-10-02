@@ -37,6 +37,21 @@ async fn admins_pause_sending_and_paid_calls() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let res = send(&app, json_req("PUT", "/api/admin/controls", &admin, on)).await;
     assert_eq!(res.status(), StatusCode::OK);
+    // A change to one switch leaves the others as they are.
+    let res = send(
+        &app,
+        json_req(
+            "PUT",
+            "/api/admin/controls",
+            &admin,
+            json!({"paid_calls_paused": false}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        json_body(res).await,
+        json!({"sending_paused": true, "paid_calls_paused": false, "first_emails_per_day": 10})
+    );
     let (s, p, n): (bool, bool, i32) = sqlx::query_as(
         "SELECT sending_paused, paid_calls_paused, first_emails_per_day FROM org WHERE id = $1",
     )
@@ -44,7 +59,7 @@ async fn admins_pause_sending_and_paid_calls() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(s && p && n == 10);
+    assert!(s && !p && n == 10);
     let audited: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'org.controls'",
     )
@@ -52,7 +67,7 @@ async fn admins_pause_sending_and_paid_calls() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(audited, 1);
+    assert_eq!(audited, 2);
 }
 
 #[tokio::test]
