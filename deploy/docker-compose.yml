@@ -44,6 +44,8 @@ services:
       M365_CLIENT_SECRET: ${M365_CLIENT_SECRET:-}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      # Encrypts each person's Outlook connection; start.sh creates it.
+      MAIL_TOKEN_KEY: ${MAIL_TOKEN_KEY:-}
     ports:
       # Bind to localhost only; expose through your VPN or reverse proxy.
       - "127.0.0.1:8080:8080"

@@ -8,4 +8,8 @@ delay_days: number, subject: string, body: string,
 /**
  * How it will look, signature and source line included.
  */
-html: string, sent_at: string | null, };
+html: string, sent_at: string | null, 
+/**
+ * When an unsent follow-up is due (Dubai date), once the one before it went.
+ */
+due: string | null, };

@@ -82,4 +82,9 @@ sent_to_recruitly: string | null,
 /**
  * Sent into the linked job's pipeline, not only as a candidate.
  */
-in_recruitly_pipeline: boolean, };
+in_recruitly_pipeline: boolean, 
+/**
+ * Where their emails are: "draft", "approved", "active", "stopped" or
+ * "done", or "reply", "auto" or "bounce" once one arrived. None if never drafted.
+ */
+email_status: string | null, };
