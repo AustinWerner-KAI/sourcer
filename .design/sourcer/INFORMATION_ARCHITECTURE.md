@@ -176,3 +176,11 @@ Mockup only, nothing built. Measured with Playwright at 1440 and 390.
 - Brief editor: 15 more employer types (Banks to Healthcare), each mapped to People Data Labs industries.
 - Review fixes before shipping: adding employer types to a brief with none would have narrowed it (now ignored); a press on several searches now shows as one result; picks clear after a pull; a count still running keeps its key, so a retry never pays twice; chips cannot be changed mid-count; Claude is not asked while searching is blocked.
 - Measured at 390: every control in the panel 44px or taller; no sideways scroll.
+
+## Built: Tightening (2 Oct 2026, PR after #33)
+
+- Search screen: when the brief's current count finds more than 300 and nothing has been pulled from it, a "Too many to pull well" panel replaces More searches. "Ask Claude to tighten" uses no search credits.
+- Claude's answer: "Why so many" (two sentences), then one or two changes, each a ticked box with the label ("Require vLLM", "Search in London, San Francisco (was anywhere)") and the spec's own words as a quote under it. "Agree and count" confirms the next brief version and counts it with the usual Count step; "Not now" closes it. Header shows "round 1 of 2"; after two rounds the panel says to edit the brief yourself.
+- The count panel then shows "Before tightening: 26,783."
+- Server checks, so a reply can only narrow and only from the spec: the quote must be in the spec (12 characters or more) and name the tool, domain or number it backs; cities must be named in the spec; a second Must domain is refused (Must domains are any one of, so it would widen); every list keeps one entry; leave-out list, excluded titles and must-haves never change; each change must stand on its own so any can be unticked.
+- Measured at 390: checkboxes rows, Not now and the main button 44px or taller; no sideways scroll.

@@ -24,6 +24,8 @@ import type { ImportRole } from "./types/ImportRole";
 import type { HandoverResult } from "./types/HandoverResult";
 import type { MorePullRequest } from "./types/MorePullRequest";
 import type { Widen } from "./types/Widen";
+import type { TightenView } from "./types/TightenView";
+import type { TightenApply } from "./types/TightenApply";
 import type { CvView } from "./types/CvView";
 import type { FeedbackRequest } from "./types/FeedbackRequest";
 import type { OutreachView } from "./types/OutreachView";
@@ -137,6 +139,11 @@ export const api = {
   /** `key` is fresh per press, so a repeated request never pays twice. */
   countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
   pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
+  /** Claude reads the spec and a count that found too many, and proposes changes. Saves and searches nothing. */
+  tighten: (id: string) => send<TightenView>("POST", `/api/roles/${id}/search/tighten`, {}),
+  /** Confirm the kept changes as the next brief version. Count it next. */
+  applyTighten: (id: string, req: TightenApply) =>
+    send<SearchState>("POST", `/api/roles/${id}/search/tighten/apply`, req),
   /** Claude chooses two wider searches. Free of search credits; asked once per brief version. */
   suggestSearches: (id: string) => send<SearchState>("POST", `/api/roles/${id}/searches/suggest`, {}),
   /** Set what a wider search adds. Slot 3 is the resourcer's own. Searches nothing. */

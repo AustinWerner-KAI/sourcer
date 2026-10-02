@@ -25,7 +25,7 @@ use crate::{
     recruitly::Recruitly,
     roles, searching,
     sources::pdl::PdlClient,
-    team, today,
+    team, tighten, today,
 };
 
 /// Brief drafts each person may run in ten minutes.
@@ -134,6 +134,11 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         .route("/api/roles/:id/brief/confirm", post(roles::confirm_brief))
         .route("/api/roles/:id/search", get(searching::get_search))
         .route("/api/roles/:id/search/count", post(searching::count))
+        .route("/api/roles/:id/search/tighten", post(tighten::ask))
+        .route(
+            "/api/roles/:id/search/tighten/apply",
+            post(tighten::apply_moves),
+        )
         .route("/api/roles/:id/searches/suggest", post(more::suggest))
         .route("/api/roles/:id/searches/pull", post(more::pull))
         .route("/api/roles/:id/searches/:slot", put(more::save))

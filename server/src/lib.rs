@@ -29,6 +29,7 @@ pub mod searching;
 pub mod sending;
 pub mod sources;
 pub mod team;
+pub mod tighten;
 pub mod today;
 pub mod worker;
 

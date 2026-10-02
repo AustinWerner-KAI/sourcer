@@ -648,3 +648,150 @@ async fn wider_searches_find_only_new_people_and_never_pay_twice() {
     .await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// A stand-in for Claude's tightening: drop a level, raise the years, and
+/// one change the spec does not back. Returns (url, request bodies).
+async fn fake_tightening() -> (String, Bodies) {
+    let bodies: Bodies = Arc::default();
+    let seen = bodies.clone();
+    let app = Router::new().route(
+        "/v1/messages",
+        post(move |Json(body): Json<Value>| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(body);
+                Json(
+                    json!({"content": [{"type": "tool_use", "id": "t", "name": "record_tightening",
+                    "input": {"why": "Two places and broad levels.", "moves": [
+                        {"kind": "drop_level", "value": "Lead", "quote": "A senior, hands-on engineer"},
+                        {"kind": "min_years", "value": "8", "quote": "8+ years in identity security"},
+                        {"kind": "require_tool", "value": "Kubernetes", "quote": "Kubernetes is a must"}
+                    ]}}]}),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, bodies)
+}
+
+#[tokio::test]
+async fn too_many_is_tightened_from_the_spec_at_most_twice() {
+    use std::sync::atomic::Ordering;
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let (pdl_url, calls) = fake_pdl(500).await;
+    let (claude_url, asked) = fake_tightening().await;
+    let mut state = AppState::new(Some(pool.clone()), None);
+    state.pdl = Arc::new(PdlClient::with_base_url(Some("k".into()), &pdl_url));
+    state.ai = Arc::new(Claude::with_base_url(Some("k".into()), &claude_url));
+    let app = router(state);
+    let uri = searchable_role(&app, &me).await;
+    let post = |path: &str, body: Value| json_req("POST", &format!("{uri}/{path}"), &me, body);
+    let ask = || post("search/tighten", json!({}));
+
+    // Nothing to read before a count, and nothing to quote without a spec.
+    assert_eq!(send(&app, ask()).await.status(), StatusCode::CONFLICT);
+    send(&app, post("search/count", json!({"key": "k1"}))).await;
+    let res = send(&app, ask()).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert!(body_text(res).await.contains("job spec"));
+    assert!(asked.lock().unwrap().is_empty());
+    sqlx::query("UPDATE role SET spec_text = $2 WHERE id = $1")
+        .bind(Uuid::parse_str(uri.rsplit('/').next().unwrap()).unwrap())
+        .bind("IAM Engineer. A senior, hands-on engineer with 8+ years in identity security.")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Claude's changes, each with its quote; the one the spec does not back is gone.
+    let t = json_body(send(&app, ask()).await).await;
+    assert_eq!(
+        (t["round"].as_i64(), t["before"].as_i64()),
+        (Some(1), Some(1000))
+    );
+    assert_eq!(t["why"], "Two places and broad levels.");
+    let labels: Vec<&str> = t["moves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, ["Drop the level Lead", "8+ years (was 5+)"]);
+    let sent = asked.lock().unwrap()[0]["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        sent.contains("<job_spec>") && sent.contains("\"people\": 500"),
+        "{sent}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "asking searches nothing");
+
+    // Keep only the first change; it becomes brief version 2, round 1.
+    let keep = |based_on: i64, moves: Value| {
+        post(
+            "search/tighten/apply",
+            json!({"based_on": based_on, "moves": moves}),
+        )
+    };
+    let first = json!([t["moves"][0]]);
+    assert_eq!(
+        send(&app, keep(7, first.clone())).await.status(),
+        StatusCode::CONFLICT
+    );
+    let bogus =
+        json!([{"kind": "require_tool", "value": "Kubernetes", "quote": "Kubernetes is a must"}]);
+    assert_eq!(
+        send(&app, keep(1, bogus)).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let s = json_body(send(&app, keep(1, first)).await).await;
+    assert_eq!(
+        (s["brief_version"].as_i64(), s["tighten_round"].as_i64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(s["lines"]["levels"], json!(["Senior"]));
+    assert_eq!(s["lines"]["min_years"], 5);
+    assert_eq!(s["count"]["stale"], true);
+
+    // Round 2, then it stops.
+    send(&app, post("search/count", json!({"key": "k2"}))).await;
+    let t = json_body(send(&app, ask()).await).await;
+    assert_eq!(t["round"], 2);
+    assert_eq!(
+        t["moves"].as_array().unwrap().len(),
+        1,
+        "Lead is already gone"
+    );
+    let s = json_body(send(&app, keep(2, t["moves"].clone())).await).await;
+    assert_eq!(
+        (
+            s["tighten_round"].as_i64(),
+            s["lines"]["min_years"].as_i64()
+        ),
+        (Some(2), Some(8))
+    );
+    send(&app, post("search/count", json!({"key": "k3"}))).await;
+    let res = send(&app, ask()).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert!(body_text(res).await.contains("twice"));
+    assert_eq!(asked.lock().unwrap().len(), 2);
+
+    // Confirming the brief by hand starts again at round 0.
+    let mut l = lines(Some("required"));
+    l["locations"] = json!(["Dubai"]);
+    let res = send(
+        &app,
+        post("brief/confirm", json!({"lines": l, "based_on": 3})),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+    assert_eq!(s["tighten_round"], 0);
+}

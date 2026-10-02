@@ -25,6 +25,7 @@ pub mod action {
     pub const SEARCH_RETUNED: &str = "search.retune";
     pub const SEARCHES_SUGGESTED: &str = "search.suggest";
     pub const SEARCH_WIDENED: &str = "search.widen";
+    pub const SEARCH_TIGHTENED: &str = "search.tighten";
     pub const SEARCH_PULLED: &str = "search.pull";
     pub const CANDIDATES_RANKED: &str = "candidates.rank";
     pub const CANDIDATE_SHORTLISTED: &str = "candidate.shortlist";

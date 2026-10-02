@@ -32,7 +32,7 @@ use crate::{
 /// The same limit Claude reads, so nothing past it is silently ignored.
 pub(crate) const MAX_SPEC_CHARS: usize = crate::ai::MAX_SPEC_CHARS;
 const SPEC_TOO_LONG: &str = "The job spec is too long. Keep it under 30,000 characters.";
-const MAX_ITEMS: usize = 20;
+pub(crate) const MAX_ITEMS: usize = 20;
 const MAX_ITEM_CHARS: usize = 120;
 /// Most years of experience a brief can ask for.
 const MAX_YEARS: i32 = 40;
@@ -107,7 +107,7 @@ pub fn problems(l: &BriefLines) -> Vec<String> {
 }
 
 /// Trim every entry, drop blanks and repeats, and refuse oversized input.
-fn tidy(mut l: BriefLines) -> Result<BriefLines, &'static str> {
+pub(crate) fn tidy(mut l: BriefLines) -> Result<BriefLines, &'static str> {
     fn list(v: Vec<String>) -> Result<Vec<String>, &'static str> {
         if v.len() > MAX_ITEMS {
             return Err("Too many entries in one line.");
@@ -869,52 +869,70 @@ pub async fn confirm_brief(
     if !issues.is_empty() {
         return refuse(StatusCode::BAD_REQUEST, issues.join(" "));
     }
-    let result = async {
-        let mut tx = pool.begin().await?;
-        match lock_role(&mut tx, user.org_id, id).await? {
-            None => return Ok(Err(StatusCode::NOT_FOUND.into_response())),
-            Some(false) => {
-                return Ok(Err(refuse(
-                    StatusCode::BAD_REQUEST,
-                    "Choose the client for this role first, so their staff are kept out.",
-                )))
-            }
-            Some(true) => {}
-        }
-        let latest: Option<i32> =
-            sqlx::query_scalar("SELECT max(version) FROM brief WHERE role_id = $1")
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await?;
-        if latest != req.based_on {
-            return Ok(Err(refuse(
-                StatusCode::CONFLICT,
-                "This brief changed in another window. Reload the page to see the latest.",
-            )));
-        }
-        let (brief_id, version) = write_draft(&mut tx, user.org_id, id, &lines, None).await?;
-        sqlx::query("UPDATE brief SET confirmed_by = $2, confirmed_at = now() WHERE id = $1")
-            .bind(brief_id)
-            .bind(user.id)
-            .execute(&mut *tx)
-            .await?;
-        audit::record(
-            &mut *tx,
-            user.org_id,
-            Some(user.id),
-            audit::action::BRIEF_CONFIRMED,
-            &format!("brief:{brief_id} role:{id} v{version}"),
-        )
-        .await?;
-        tx.commit().await?;
-        anyhow::Ok(Ok(()))
-    }
-    .await;
+    let result = confirm_lines(pool, &user, id, &lines, req.based_on, 0).await;
     match result {
         Ok(Ok(())) => get_role(State(state), user, Path(id)).await,
         Ok(Err(r)) => r,
         Err(e) => server_error(e),
     }
+}
+
+/// Confirm these lines as the role's next brief version, if the latest is
+/// still `based_on`. `tighten_round` is 0 unless a tightening made them.
+/// The caller has checked the lines. `Ok(Err)` is a refusal to return as is.
+pub(crate) async fn confirm_lines(
+    pool: &PgPool,
+    user: &CurrentUser,
+    id: Uuid,
+    lines: &BriefLines,
+    based_on: Option<i32>,
+    tighten_round: i16,
+) -> anyhow::Result<Result<(), Response>> {
+    let mut tx = pool.begin().await?;
+    match lock_role(&mut tx, user.org_id, id).await? {
+        None => return Ok(Err(StatusCode::NOT_FOUND.into_response())),
+        Some(false) => {
+            return Ok(Err(refuse(
+                StatusCode::BAD_REQUEST,
+                "Choose the client for this role first, so their staff are kept out.",
+            )))
+        }
+        Some(true) => {}
+    }
+    let latest: Option<i32> =
+        sqlx::query_scalar("SELECT max(version) FROM brief WHERE role_id = $1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if latest != based_on {
+        return Ok(Err(refuse(
+            StatusCode::CONFLICT,
+            "This brief changed in another window. Reload the page to see the latest.",
+        )));
+    }
+    let (brief_id, version) = write_draft(&mut tx, user.org_id, id, lines, None).await?;
+    sqlx::query(
+            "UPDATE brief SET confirmed_by = $2, confirmed_at = now(), tighten_round = $3 WHERE id = $1",
+        )
+        .bind(brief_id)
+        .bind(user.id)
+        .bind(tighten_round)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut *tx,
+        user.org_id,
+        Some(user.id),
+        audit::action::BRIEF_CONFIRMED,
+        &if tighten_round > 0 {
+            format!("brief:{brief_id} role:{id} v{version} tightened:{tighten_round}")
+        } else {
+            format!("brief:{brief_id} role:{id} v{version}")
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    anyhow::Ok(Ok(()))
 }
 
 #[cfg(test)]

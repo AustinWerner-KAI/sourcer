@@ -242,6 +242,21 @@ impl Claude {
         serde_json::from_value(input).map_err(|e| AiError::Provider(e.to_string()))
     }
 
+    /// Tightening: why a count found far too many, and changes from the spec.
+    pub async fn tighten(
+        &self,
+        spec: &str,
+        brief: &BriefLines,
+        counts: &[crate::domain::CountLocation],
+    ) -> Result<crate::tighten::Reply, AiError> {
+        let key = self.api_key.as_deref().ok_or(AiError::NotConfigured)?;
+        let body = crate::tighten::request(&self.draft_model, spec, brief, counts);
+        let input = self
+            .call_tool(key, &body, "no tightening in the reply", DRAFT_TIMEOUT_SECS)
+            .await?;
+        serde_json::from_value(input).map_err(|e| AiError::Provider(e.to_string()))
+    }
+
     /// Assess a CV, with personal details already removed, against roles.
     pub async fn assess_cv(
         &self,

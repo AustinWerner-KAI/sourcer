@@ -280,6 +280,15 @@ async fn search_state(
     .bind(role_id)
     .fetch_one(pool)
     .await?;
+    let tighten_round: i16 = match &brief {
+        Some((id, _, _)) => {
+            sqlx::query_scalar("SELECT tighten_round FROM brief WHERE id = $1")
+                .bind(id)
+                .fetch_one(pool)
+                .await?
+        }
+        None => 0,
+    };
     let more = match &brief {
         Some((brief_id, _, lines)) => crate::more::views(pool, org_id, *brief_id, lines).await?,
         None => Vec::new(),
@@ -295,6 +304,7 @@ async fn search_state(
         pull,
         pulling,
         more,
+        tighten_round: tighten_round.into(),
         credits_this_month,
     })
 }
