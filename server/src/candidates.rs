@@ -755,15 +755,35 @@ pub async fn decide(
             return anyhow::Ok(false);
         }
         if to == CandidacyState::Rejected {
-            // Nothing more goes to someone rejected.
-            sqlx::query(
+            // Nothing more goes to someone rejected, and their approval goes too.
+            let stopped = sqlx::query(
                 "UPDATE outreach SET status = 'stopped', stop_reason = 'Rejected',
                         version = version + 1, updated_at = now()
-                 WHERE candidacy_id = $1 AND status IN ('draft', 'approved', 'active')",
+                 WHERE candidacy_id = $1 AND org_id = $2
+                   AND status IN ('draft', 'approved', 'active')",
+            )
+            .bind(candidacy)
+            .bind(user.org_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            sqlx::query(
+                "UPDATE candidacy SET sequence_approved_by = NULL, sequence_approved_at = NULL
+                 WHERE id = $1",
             )
             .bind(candidacy)
             .execute(&mut *tx)
             .await?;
+            if stopped > 0 {
+                audit::record(
+                    &mut *tx,
+                    user.org_id,
+                    Some(user.id),
+                    audit::action::OUTREACH_STOPPED,
+                    &format!("candidacy:{candidacy} reason:rejected"),
+                )
+                .await?;
+            }
         }
         let why = reason
             .and_then(|r| serde_json::to_value(r).ok())
