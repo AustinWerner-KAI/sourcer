@@ -4,7 +4,6 @@ import { api, SignedOut } from "../api/client";
 import type { Me } from "../api/types/Me";
 import type { Role } from "../api/types/Role";
 import type { TeamMember } from "../api/types/TeamMember";
-import { RecruitlyPanel } from "./Recruitly";
 
 const statusLabel: Record<TeamMember["status"], string> = {
   invited: "Invited",
@@ -12,7 +11,7 @@ const statusLabel: Record<TeamMember["status"], string> = {
   disabled: "Switched off",
 };
 
-/** Admins add people to Sourcer and switch them off or back on. */
+/** Admin › Team: add people to Sourcer and switch them off or back on. */
 export function Team({ me }: { me: Me }) {
   const queryClient = useQueryClient();
   const team = useQuery({
@@ -62,12 +61,7 @@ export function Team({ me }: { me: Me }) {
   };
 
   return (
-    <main>
-      <header>
-        <div className="eyebrow">Admin</div>
-        <h1>Team</h1>
-      </header>
-
+    <>
       <section className="panel">
         <h2 className="panel-title">Add someone</h2>
         <p className="panel-note">They sign in with their Microsoft 365 account. Nothing is sent to them.</p>
@@ -108,7 +102,7 @@ export function Team({ me }: { me: Me }) {
         {team.isLoading && <p className="panel-note">Loading</p>}
         {team.isError && <p className="form-error">Could not load the team. Please refresh.</p>}
         {team.data && (
-          <table className="team">
+          <table className="team people">
             <thead>
               <tr>
                 <th>Name</th>
@@ -143,7 +137,6 @@ export function Team({ me }: { me: Me }) {
           </table>
         )}
       </section>
-      <RecruitlyPanel />
-    </main>
+    </>
   );
 }
