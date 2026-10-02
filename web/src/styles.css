@@ -484,3 +484,23 @@ ul.today .form-error { margin: 8px 0 0; }
   .more .bar { flex-direction: column; align-items: stretch; }
   .more .bar .btn-primary { width: 100%; min-height: 48px; }
 }
+
+/* Tightening: changes from the spec, each with its quote. */
+.r3 > p { margin: 0 0 12px; font-size: 13.5px; color: var(--text-2); line-height: 1.5; }
+.r3 .read { margin: 0 0 14px; }
+.r3 .panel-title .c { font-weight: 400; white-space: nowrap; }
+.r3-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.r3-list li { padding: 12px 0; border-top: 1px solid var(--line); }
+.r3-list label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; cursor: pointer; }
+.r3-list input { accent-color: #ffd100; width: 18px; height: 18px; margin: 2px 0 0; }
+.r3-list .now { display: block; color: var(--text); font-weight: 500; font-size: 14px; }
+.r3-list q { display: block; margin-top: 4px; color: var(--text-2); font-size: 13px; font-style: italic; line-height: 1.45; }
+.r3 .actions-row { flex-wrap: wrap; }
+@media (max-width: 768px) {
+  .r3-list label { min-height: 44px; }
+  .r3-list input { width: 22px; height: 22px; }
+  .r3 .bar { flex-direction: column; align-items: stretch; }
+  .r3 .bar .btn-primary { width: 100%; min-height: 48px; }
+  .r3 .link-button { min-height: 44px; }
+}
+
