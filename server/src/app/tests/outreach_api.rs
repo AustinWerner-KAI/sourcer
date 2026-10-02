@@ -584,3 +584,141 @@ async fn do_not_contact_after_drafting_blocks_approval() {
     assert_eq!(res.status(), StatusCode::CONFLICT);
     assert_eq!(state_of(&pool, c).await, "drafted");
 }
+
+#[tokio::test]
+async fn a_closed_role_sends_nothing_and_drops_off_the_open_list() {
+    let Some(pool) = testutil::pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (_, me) = signed_in(&pool, org, "resourcer").await;
+    let app = plain_app(pool.clone());
+    set_signature(&app, &me, "Regards\nSam").await;
+    let c = shortlisted(&pool, org, Some(&personal())).await;
+    let v = draft(&app, &me, c).await;
+    assert_eq!(v["problems"], json!([]));
+    let uri = format!("/api/candidates/{c}/outreach");
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/approve"),
+            &me,
+            json!({"version": v["version"]}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let role: Uuid = sqlx::query_scalar("SELECT role_id FROM candidacy WHERE id = $1")
+        .bind(c)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let close = |closed: bool| {
+        json_req(
+            "POST",
+            &format!("/api/roles/{role}/close"),
+            &me,
+            json!({"closed": closed}),
+        )
+    };
+
+    // The list says what closing stops.
+    let roles = json_body(send(&app, get_req("/api/roles", Some(&me))).await).await;
+    let mine = |rs: &Value| {
+        rs.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == json!(role))
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        (
+            mine(&roles)["closed"].as_bool(),
+            mine(&roles)["active_sequences"].as_i64()
+        ),
+        (Some(false), Some(1))
+    );
+
+    let going = |t: &Value| {
+        t["going_out"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["candidacy_id"] == json!(c))
+    };
+    let today = json_body(send(&app, get_req("/api/today", Some(&me))).await).await;
+    assert!(going(&today), "{today}");
+
+    let roles = json_body(send(&app, close(true)).await).await;
+    assert_eq!(mine(&roles)["closed"], true);
+    let today = json_body(send(&app, get_req("/api/today", Some(&me))).await).await;
+    assert!(
+        !going(&today),
+        "a closed role's emails are not shown as going out"
+    );
+    // Before any send, every check runs again and now stops it.
+    let problems = crate::outreach::problems_before_send(
+        &pool,
+        org,
+        c,
+        sqlx::query_scalar("SELECT sender_id FROM outreach WHERE candidacy_id = $1")
+            .bind(c)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        problems.contains(&"This role is closed.".to_string()),
+        "{problems:?}"
+    );
+    let s = json_body(
+        send(
+            &app,
+            get_req(&format!("/api/roles/{role}/search"), Some(&me)),
+        )
+        .await,
+    )
+    .await;
+    assert!(s["blocked"].as_str().unwrap().contains("closed"));
+    let detail =
+        json_body(send(&app, get_req(&format!("/api/roles/{role}"), Some(&me))).await).await;
+    assert_eq!(detail["closed"], true);
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit WHERE org_id = $1 AND action = 'role.close'",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 1);
+    // Closing twice changes nothing.
+    send(&app, close(true)).await;
+
+    let roles = json_body(send(&app, close(false)).await).await;
+    assert_eq!(mine(&roles)["closed"], false);
+
+    // Another organisation cannot close it.
+    let other = testutil::org(&pool).await;
+    let (_, outsider) = signed_in(&pool, other, "admin").await;
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("/api/roles/{role}/close"),
+            &outsider,
+            json!({"closed": true}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let closed: bool = sqlx::query_scalar("SELECT closed_at IS NOT NULL FROM role WHERE id = $1")
+        .bind(role)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!closed);
+}
