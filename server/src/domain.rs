@@ -343,6 +343,8 @@ pub struct SearchState {
     pub pulling: bool,
     /// Up to three wider searches of the confirmed brief, by slot.
     pub more: Vec<MoreSearch>,
+    /// How many tightenings made the confirmed brief: 0, 1 or 2.
+    pub tighten_round: i32,
     /// Credits used by this organisation since the start of the month.
     #[ts(type = "number")]
     pub credits_this_month: i64,
@@ -507,6 +509,63 @@ pub struct MorePullRequest {
     /// Required when pulling more than 50 people at once.
     pub confirmed: bool,
     pub key: String,
+}
+
+/// One way a tightening narrows the brief, towards the spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub enum TightenKind {
+    /// A tool the spec names as essential becomes required (added if new).
+    RequireTool,
+    /// An area the spec insists on becomes a Must domain (added if new).
+    MustDomain,
+    DropTitle,
+    DropLevel,
+    /// More years, as the spec asks. `value` is the number.
+    MinYears,
+    DropEmployerType,
+    /// An anywhere search becomes these cities, comma separated, all named in the spec.
+    SetLocations,
+    DropLocation,
+}
+
+/// One tightening change, with the words of the spec that justify it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct TightenMove {
+    pub kind: TightenKind,
+    pub value: String,
+    /// Copied from the spec. A change whose quote is not in the spec is dropped.
+    pub quote: String,
+    /// The change in words, set by the server.
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Claude's tightening of a brief that found far too many people. Nothing
+/// is saved until the resourcer agrees.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct TightenView {
+    /// The confirmed brief version this tightens.
+    pub based_on: i32,
+    /// This will be round 1 or 2.
+    pub round: i32,
+    /// Why so many were found, in plain words.
+    pub why: String,
+    /// People the count found before tightening.
+    #[ts(type = "number")]
+    pub before: i64,
+    pub moves: Vec<TightenMove>,
+}
+
+/// POST /api/roles/:id/search/tighten/apply: the changes the resourcer kept.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../web/src/api/types/")]
+pub struct TightenApply {
+    pub based_on: i32,
+    pub moves: Vec<TightenMove>,
 }
 
 /// The three lists on the Candidates screen.
