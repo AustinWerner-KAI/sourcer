@@ -37,6 +37,10 @@ pulling: boolean,
  */
 more: Array<MoreSearch>, 
 /**
+ * How many tightenings made the confirmed brief: 0, 1 or 2.
+ */
+tighten_round: number, 
+/**
  * Credits used by this organisation since the start of the month.
  */
 credits_this_month: number, };
