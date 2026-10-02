@@ -324,9 +324,9 @@ async fn paused_organisation_cannot_count() {
     );
 }
 
-/// A stand-in for Claude's Round 2: makes the required tool nice to have,
-/// the Must domain Plus, and adds a title. Returns (url, request bodies).
-async fn fake_round_two() -> (String, Bodies) {
+/// A stand-in for Claude choosing wider searches: wider titles, a nearby
+/// market, and one that widens nothing. Returns (url, request bodies).
+async fn fake_searches() -> (String, Bodies) {
     let bodies: Bodies = Arc::default();
     let seen = bodies.clone();
     let app = Router::new().route(
@@ -336,14 +336,19 @@ async fn fake_round_two() -> (String, Bodies) {
             async move {
                 seen.lock().unwrap().push(body);
                 Json(
-                    json!({"content": [{"type": "tool_use", "id": "t", "name": "record_round_two",
-                    "input": {
-                        "diagnosis": "CyberArk as a required tool emptied the search.",
-                        "tools_to_nice": ["CyberArk"], "domains_to_plus": ["Privileged access"],
-                        "add_titles": ["IAM Engineer"], "add_levels": [], "min_years": 5,
-                        "add_employer_types": [], "add_locations": [], "allow_remote": false,
-                        "reasons": [{"line": "tools", "reason": "Few profiles name CyberArk."}]
-                    }}]}),
+                    json!({"content": [{"type": "tool_use", "id": "t", "name": "record_searches",
+                    "input": {"searches": [
+                        {"name": "Wider titles", "note": "Adds titles the same work goes by.",
+                         "add_titles": ["Security Engineer", "IAM Engineer"], "add_levels": [],
+                         "add_locations": [], "add_employer_types": [], "tools_to_nice": [],
+                         "domains_to_plus": []},
+                        {"name": "Nearby markets", "note": "Adds Riyadh.",
+                         "add_titles": [], "add_levels": [], "add_locations": ["Riyadh"],
+                         "add_employer_types": [], "tools_to_nice": [], "domains_to_plus": []},
+                        {"name": "Nothing", "note": "", "add_titles": ["security engineer"],
+                         "add_levels": [], "add_locations": [], "add_employer_types": [],
+                         "tools_to_nice": [], "domains_to_plus": []}
+                    ]}}]}),
                 )
             }
         }),
@@ -354,116 +359,292 @@ async fn fake_round_two() -> (String, Bodies) {
     (url, bodies)
 }
 
+/// Runs every queued pull job of a pull, as the worker would.
+async fn run_pull(pool: &PgPool, pdl: Arc<PdlClient>, pull_id: &str) -> Vec<Value> {
+    let jobs: Vec<(Uuid, Uuid, String, Value, i32)> = sqlx::query_as(
+        "SELECT id, org_id, kind, payload, attempts FROM job
+         WHERE kind = 'search.pull' AND payload->>'pull_id' = $1",
+    )
+    .bind(pull_id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let handler = searching::PullHandler {
+        pool: pool.clone(),
+        source: pdl,
+    };
+    for (id, org_id, kind, payload, attempts) in &jobs {
+        let job = crate::jobs::Job {
+            id: *id,
+            org_id: *org_id,
+            kind: kind.clone(),
+            payload: payload.clone(),
+            attempts: *attempts,
+        };
+        crate::worker::JobHandler::handle(&handler, &job)
+            .await
+            .unwrap();
+    }
+    jobs.into_iter().map(|j| j.3).collect()
+}
+
 #[tokio::test]
-async fn round_two_proposes_a_relaxed_brief_and_searches_nothing() {
+async fn wider_searches_find_only_new_people_and_never_pay_twice() {
     use std::sync::atomic::Ordering;
     let Some(pool) = testutil::pool().await else {
         return;
     };
     let org = testutil::org(&pool).await;
     let (_, me) = signed_in(&pool, org, "resourcer").await;
-    let (pdl_url, pdl_calls) = fake_pdl(0).await;
-    let (claude_url, asked) = fake_round_two().await;
+    let bodies: Bodies = Arc::default();
+    let (pdl_url, calls) = fake_pdl_seeing(30, bodies.clone()).await;
+    let (claude_url, asked) = fake_searches().await;
+    let pdl = Arc::new(PdlClient::with_base_url(Some("k".into()), &pdl_url));
     let mut state = AppState::new(Some(pool.clone()), None);
-    state.pdl = Arc::new(PdlClient::with_base_url(Some("k".into()), &pdl_url));
+    state.pdl = pdl.clone();
     state.ai = Arc::new(Claude::with_base_url(Some("k".into()), &claude_url));
     let app = router(state);
     let uri = searchable_role(&app, &me).await;
-    let retune = || json_req("POST", &format!("{uri}/search/retune"), &me, json!({}));
+    let suggest = || json_req("POST", &format!("{uri}/searches/suggest"), &me, json!({}));
+    let post = |path: &str, body: Value| json_req("POST", &format!("{uri}/{path}"), &me, body);
 
-    // Nothing to read until there is a count.
-    let res = send(&app, retune()).await;
-    assert_eq!(res.status(), StatusCode::CONFLICT);
-    assert!(
-        asked.lock().unwrap().is_empty(),
-        "Claude is not asked without a count"
-    );
+    // Claude is not asked before the brief's search is counted.
+    assert_eq!(send(&app, suggest()).await.status(), StatusCode::CONFLICT);
+    assert!(asked.lock().unwrap().is_empty());
+    let s = json_body(send(&app, post("search/count", json!({"key": "b1"}))).await).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let brief_count = s["count"]["id"].clone();
 
-    let key = Uuid::new_v4().to_string();
-    send(
-        &app,
-        json_req(
-            "POST",
-            &format!("{uri}/search/count"),
-            &me,
-            json!({"key": key}),
+    // Two usable searches; the one that widens nothing is dropped.
+    let s = json_body(send(&app, suggest()).await).await;
+    let more = s["more"].as_array().unwrap();
+    assert_eq!(more.len(), 2, "{more:?}");
+    assert_eq!(
+        (
+            more[0]["slot"].as_i64(),
+            more[0]["name"].as_str(),
+            more[0]["by_claude"].as_bool()
         ),
-    )
-    .await;
-    assert_eq!(pdl_calls.load(Ordering::SeqCst), 2);
-
-    let res = send(&app, retune()).await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let r = json_body(res).await;
-    assert_eq!(r["based_on"], 1);
-    assert_eq!(
-        r["diagnosis"],
-        "CyberArk as a required tool emptied the search."
+        (Some(1), Some("Wider titles"), Some(true))
     );
-    assert_eq!(r["lines"]["tools"][0]["status"], "nice");
-    assert_eq!(r["lines"]["domains"][0]["weight"], "plus");
     assert_eq!(
-        r["lines"]["titles"],
-        json!(["Security Engineer", "IAM Engineer"])
+        more[0]["widen"]["add_titles"],
+        json!(["IAM Engineer"]),
+        "the brief's title drops out"
     );
-    assert_eq!(r["lines"]["min_years"], 5, "same years is no change");
-    assert_eq!(r["changes"][0]["line"], "Required tools");
-    assert_eq!(r["changes"][0]["reason"], "Few profiles name CyberArk.");
+    assert_eq!(more[0]["locations"], json!(["New York", "Dubai"]));
+    assert_eq!(
+        more[1]["locations"],
+        json!(["Riyadh"]),
+        "only the new place is searched"
+    );
+    assert!(more[1]["count"].is_null());
     let sent = asked.lock().unwrap()[0]["messages"][0]["content"]
         .as_str()
         .unwrap()
         .to_string();
-    assert!(
-        sent.contains("\"people\": 0") && sent.contains("CyberArk"),
-        "{sent}"
-    );
+    assert!(sent.contains("\"people\": 30"), "{sent}");
+    // Asking again returns them without asking Claude again.
+    send(&app, suggest()).await;
+    assert_eq!(asked.lock().unwrap().len(), 1);
 
-    // Nothing was saved or searched.
-    assert_eq!(
-        pdl_calls.load(Ordering::SeqCst),
-        2,
-        "no search until agreed"
-    );
-    let role = json_body(send(&app, get_req(&uri, Some(&me))).await).await;
-    assert_eq!(role["brief"]["version"], 1);
-    assert_eq!(role["brief"]["lines"]["tools"][0]["status"], "required");
-
-    // Agreeing is the usual confirm, then a count of the new version.
-    let res = send(
-        &app,
-        json_req(
-            "POST",
-            &format!("{uri}/brief/confirm"),
-            &me,
-            json!({"lines": r["lines"], "based_on": r["based_on"]}),
-        ),
-    )
-    .await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let key = Uuid::new_v4().to_string();
+    // Pull 10 from the brief.
     let s = json_body(
         send(
             &app,
-            json_req(
-                "POST",
-                &format!("{uri}/search/count"),
-                &me,
-                json!({"key": key}),
+            post(
+                "search/pull",
+                json!({"count_id": brief_count, "confirmed": false, "key": "bp",
+                       "picks": [{"location": "Dubai", "size": 10}]}),
             ),
         )
         .await,
     )
     .await;
-    assert_eq!(s["count"]["brief_version"], 2);
-    assert_eq!(s["count"]["stale"], false);
+    assert_eq!(s["pulling"], true);
+    assert_eq!(s["count"]["pulled"], true);
+    run_pull(&pool, pdl.clone(), s["pull"]["id"].as_str().unwrap()).await;
 
-    // Unconfirmed edits come first.
-    send(
-        &app,
-        json_req("PUT", &format!("{uri}/brief"), &me, lines(Some("required"))),
+    // Counting a wider search leaves out the 10 already found.
+    let s = json_body(send(&app, post("searches/2/count", json!({"key": "c2"}))).await).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 4, "one credit, Riyadh only");
+    let last = bodies.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        last["query"]["bool"]["must_not"][0]["terms"]["id"]
+            .as_array()
+            .map(Vec::len),
+        Some(10)
+    );
+    let c = &s["more"][1]["count"];
+    assert_eq!(c["locations"], json!([{"label": "Riyadh", "total": 30}]));
+    assert_eq!(
+        (c["stale"].as_bool(), c["pulled"].as_bool()),
+        (Some(false), Some(false))
+    );
+    let old_count = c["id"].clone();
+
+    // Changing the search makes its count stale, and a stale count is never pulled.
+    let s = json_body(
+        send(
+            &app,
+            json_req(
+                "PUT",
+                &format!("{uri}/searches/2"),
+                &me,
+                json!({"widen": {"add_locations": ["Riyadh", "Doha"]}}),
+            ),
+        )
+        .await,
     )
     .await;
-    let res = send(&app, retune()).await;
+    assert_eq!(s["more"][1]["version"], 2);
+    assert_eq!(s["more"][1]["count"]["stale"], true);
+    let pick = |count: &Value, size: u32, key: &str| json!({"picks": [{"slot": 2, "count_id": count, "size": size}], "confirmed": false, "key": key});
+    let res = send(&app, post("searches/pull", pick(&old_count, 10, "x"))).await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
-    assert_eq!(asked.lock().unwrap().len(), 1);
+
+    // Count again: Riyadh and Doha. Pull 40 spread over both.
+    let s = json_body(send(&app, post("searches/2/count", json!({"key": "c3"}))).await).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
+    let count = s["more"][1]["count"]["id"].clone();
+    let res = send(&app, post("searches/pull", pick(&count, 61, "y"))).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "more than it has");
+    let s = json_body(send(&app, post("searches/pull", pick(&count, 40, "p"))).await).await;
+    assert_eq!(s["pull"]["search_name"], "Nearby markets");
+    assert_eq!(s["more"][1]["count"]["pulled"], true);
+    let jobs = run_pull(&pool, pdl.clone(), s["pull"]["id"].as_str().unwrap()).await;
+    let mut sizes: Vec<(String, u64)> = jobs
+        .iter()
+        .map(|j| {
+            (
+                j["location"].as_str().unwrap().to_string(),
+                j["size"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    sizes.sort();
+    assert_eq!(
+        sizes,
+        [("Doha".to_string(), 20), ("Riyadh".to_string(), 20)]
+    );
+    assert_eq!(jobs[0]["widen"]["add_locations"], json!(["Riyadh", "Doha"]));
+    let found_by: Vec<(Option<String>, i64)> = sqlx::query_as(
+        "SELECT e.name, count(*) FROM candidacy c LEFT JOIN extra_search e ON e.id = c.search_id
+         WHERE c.org_id = $1 GROUP BY 1 ORDER BY 1",
+    )
+    .bind(org)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(found_by, [(Some("Nearby markets".into()), 40), (None, 10)]);
+    // The worker searched the widened brief for Doha, leaving out everyone found.
+    let doha = bodies
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|b| b.to_string().contains("doha"))
+        .cloned()
+        .unwrap();
+    assert!(
+        doha["query"]["bool"]["must_not"][0]["terms"]["id"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 10
+    );
+
+    // The same press again queues nothing; another press is refused.
+    send(&app, post("searches/pull", pick(&count, 40, "p"))).await;
+    let pulls: i64 = sqlx::query_scalar("SELECT count(*) FROM pull WHERE org_id = $1")
+        .bind(org)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pulls, 2);
+    let res = send(&app, post("searches/pull", pick(&count, 5, "q"))).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // Your own search: it must widen something; slots stop at 3.
+    let put = |slot: u32, widen: Value| {
+        json_req(
+            "PUT",
+            &format!("{uri}/searches/{slot}"),
+            &me,
+            json!({"widen": widen}),
+        )
+    };
+    let res = send(&app, put(3, json!({"add_titles": ["Security Engineer"]}))).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "already the brief's"
+    );
+    let s = json_body(
+        send(
+            &app,
+            put(3, json!({"add_levels": ["Principal"], "min_years": 3})),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        (
+            s["more"][2]["name"].as_str(),
+            s["more"][2]["by_claude"].as_bool()
+        ),
+        (Some("Your search"), Some(false))
+    );
+    assert_eq!(s["more"][2]["widen"]["min_years"], 3);
+    assert_eq!(
+        send(&app, put(4, json!({"add_levels": ["Staff"]})))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s["credits_this_month"], 2 + 10 + 1 + 2 + 40);
+
+    // One press on two searches: one pull each, shown together.
+    send(&app, post("searches/1/count", json!({"key": "c4"}))).await;
+    let s = json_body(send(&app, post("searches/3/count", json!({"key": "c5"}))).await).await;
+    let both = json!({"picks": [
+        {"slot": 1, "count_id": s["more"][0]["count"]["id"], "size": 10},
+        {"slot": 3, "count_id": s["more"][2]["count"]["id"], "size": 10}
+    ], "confirmed": false, "key": "both"});
+    let s = json_body(send(&app, post("searches/pull", both)).await).await;
+    let p = &s["pull"];
+    assert_eq!(
+        (
+            p["requested"].as_i64(),
+            p["locations"].as_i64(),
+            p["search_name"].as_str()
+        ),
+        (Some(20), Some(4), Some("Wider titles and Your search"))
+    );
+
+    // Confirming the brief again starts afresh.
+    let mut l = lines(Some("required"));
+    l["locations"] = json!(["Dubai"]);
+    send(
+        &app,
+        post("brief/confirm", json!({"lines": l, "based_on": 1})),
+    )
+    .await;
+    let s = json_body(send(&app, get_req(&format!("{uri}/search"), Some(&me))).await).await;
+    assert_eq!(s["more"], json!([]));
+
+    // Another organisation cannot see or use these searches.
+    let other = testutil::org(&pool).await;
+    let (_, outsider) = signed_in(&pool, other, "admin").await;
+    let res = send(
+        &app,
+        json_req(
+            "POST",
+            &format!("{uri}/searches/suggest"),
+            &outsider,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
