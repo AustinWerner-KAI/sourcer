@@ -9,6 +9,7 @@ import type { PullView } from "../api/types/PullView";
 import type { SearchState } from "../api/types/SearchState";
 import { Steps } from "./Briefs";
 import { MoreSearches } from "./MoreSearches";
+import { Tighten, TOO_MANY } from "./Tighten";
 
 /** Pulls bigger than this ask for a second click (the server checks too). */
 const CONFIRM_ABOVE = 50;
@@ -74,6 +75,8 @@ export function Search() {
       q.state.data?.pulling || (q.state.data?.pull && !q.state.data.pull.done) ? 2000 : false,
   });
   const [picks, setPicks] = useState<Record<string, number>>({});
+  // The count before the last tightening, and the brief version it made.
+  const [before, setBefore] = useState<{ total: number; version: number } | null>(null);
   const [confirming, setConfirming] = useState(false);
   // Counting again spends credits and clears the choices, so it asks first.
   const [recounting, setRecounting] = useState(false);
@@ -220,6 +223,7 @@ export function Search() {
             <p className="panel-note">Each person costs 1 credit. Nothing is chosen for you.</p>
             <p className="meta">
               Counted {ago(s.count.counted_at)} from brief version {s.count.brief_version}.
+              {before && before.version === s.count.brief_version && ` Before tightening: ${before.total.toLocaleString()}.`}
             </p>
             {s.count.stale ? (
               <p className="warnline">The brief has changed since this count. Count again before pulling.</p>
@@ -302,7 +306,20 @@ export function Search() {
           </section>
         )}
 
-        {s.count && !s.count.stale && s.lines && (
+        {s.count && !s.count.stale && !alreadyPulled && found > TOO_MANY && !s.unconfirmed_edits && !running && (
+          <Tighten
+            roleId={id}
+            s={s}
+            found={found}
+            onState={settle}
+            onApplied={(st, total, version) => {
+              settle(st);
+              setBefore({ total, version });
+              doCount();
+            }}
+          />
+        )}
+        {s.count && !s.count.stale && found <= TOO_MANY && s.lines && (
           <MoreSearches roleId={id} s={s} lines={s.lines} found={found} running={running} onState={settle} />
         )}
 
