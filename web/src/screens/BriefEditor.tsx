@@ -188,7 +188,7 @@ export function BriefEditor() {
           <div className="eyebrow">{r.client?.name ?? "Role"}</div>
           <h1>{r.title}</h1>
         </header>
-        <Steps at={confirmed ? 3 : 2} />
+        <Steps at={1} roleId={id} />
       </div>
 
       <div className="brief-grid">
@@ -497,7 +497,7 @@ export function BriefEditor() {
                   )}
                 </div>
                 {confirmed && (
-                  <Link className="btn-primary btn-inline" to={`/brief/${id}/search`}>
+                  <Link className="btn-primary btn-inline" to={`/roles/${id}/search`}>
                     Go to search
                   </Link>
                 )}
