@@ -124,7 +124,7 @@ export function Search() {
     mutationFn: (p: RetuneView) => api.saveBrief(id, p.lines),
     onSuccess: (d) => {
       queryClient.setQueryData(["role", id], d);
-      navigate(`/brief/${id}`);
+      navigate(`/roles/${id}/brief`);
     },
   });
   const count = useMutation({
@@ -190,7 +190,7 @@ export function Search() {
           <div className="eyebrow">{r.client?.name ?? "Role"}</div>
           <h1>{r.title}</h1>
         </header>
-        <Steps at={3} />
+        <Steps at={2} roleId={id} />
       </div>
 
       {s.blocked && (
@@ -199,7 +199,7 @@ export function Search() {
           {!s.brief_version && (
             <>
               {" "}
-              <Link to={`/brief/${id}`}>Go to the brief</Link>
+              <Link to={`/roles/${id}/brief`}>Go to the brief</Link>
             </>
           )}
         </div>
@@ -207,7 +207,7 @@ export function Search() {
       {s.unconfirmed_edits && s.brief_version && (
         <div className="notice">
           The brief has edits that are not confirmed yet. Searches use confirmed version {s.brief_version}.{" "}
-          <Link to={`/brief/${id}`}>Review the brief</Link>
+          <Link to={`/roles/${id}/brief`}>Review the brief</Link>
         </div>
       )}
 
@@ -640,7 +640,7 @@ function PullResult({ p, roleId }: { p: PullView; roleId: string }) {
       </div>
       <div className="bar">
         <span className="total">Claude ranks the new people in about a minute.</span>
-        <Link className="btn-primary btn-inline" to={`/brief/${roleId}/candidates`}>
+        <Link className="btn-primary btn-inline" to={`/roles/${roleId}/candidates`}>
           See the candidates
         </Link>
       </div>

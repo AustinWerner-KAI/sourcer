@@ -95,7 +95,7 @@ export function JobSearch({
                 </div>
               </div>
               {j.role_id ? (
-                <Link className="link-button" to={`/brief/${j.role_id}`}>
+                <Link className="link-button" to={`/roles/${j.role_id}`}>
                   Open its role
                 </Link>
               ) : (

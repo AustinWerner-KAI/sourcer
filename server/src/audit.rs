@@ -41,6 +41,9 @@ pub mod action {
     pub const OUTREACH_APPROVED: &str = "outreach.approve";
     pub const OUTREACH_STOPPED: &str = "outreach.stop";
     pub const OUTREACH_SETTINGS: &str = "outreach.settings";
+    pub const CONTROLS_SET: &str = "org.controls";
+    pub const CLIENT_UPDATED: &str = "client.update";
+    pub const DNC_ADDED: &str = "dnc.add";
 }
 
 /// Write one audit entry. `actor_id` is `None` for work the system did itself.

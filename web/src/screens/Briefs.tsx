@@ -10,7 +10,7 @@ const briefLabel: Record<string, string> = {
   confirmed: "Confirmed",
 };
 
-/** Every role, newest first, with where its brief is. */
+/** Every role, newest first: where its brief is, and a way into its candidates. */
 export function Briefs() {
   const roles = useQuery({ queryKey: ["roles"], queryFn: api.roles });
 
@@ -19,9 +19,9 @@ export function Briefs() {
       <div className="head-row">
         <header>
           <div className="eyebrow">Sourcer</div>
-          <h1>Brief</h1>
+          <h1>Roles</h1>
         </header>
-        <Link className="btn-primary btn-inline" to="/brief/new">
+        <Link className="btn-primary btn-inline" to="/roles/new">
           New role
         </Link>
       </div>
@@ -32,25 +32,33 @@ export function Briefs() {
           <p>No roles yet. Add one with its job spec, and Claude drafts the brief for you to check.</p>
         )}
         {roles.data && roles.data.length > 0 && (
-          <table className="team">
+          <table className="team roles">
             <thead>
               <tr>
                 <th>Role</th>
                 <th>Client</th>
                 <th>Brief</th>
+                <th />
               </tr>
             </thead>
             <tbody>
               {roles.data.map((r) => (
                 <tr key={r.id}>
                   <td>
-                    <Link to={`/brief/${r.id}`}>{r.title}</Link>
+                    <Link to={`/roles/${r.id}`}>{r.title}</Link>
                   </td>
                   <td>{r.client_name ?? "None"}</td>
                   <td>
                     <span className={`pill pill-${r.brief_state === "confirmed" ? "active" : "invited"}`}>
                       {briefLabel[r.brief_state] ?? r.brief_state}
                     </span>
+                  </td>
+                  <td className="actions">
+                    {r.brief_state === "confirmed" ? (
+                      <Link to={`/roles/${r.id}/candidates`}>Candidates</Link>
+                    ) : (
+                      <Link to={`/roles/${r.id}/brief`}>Check the brief</Link>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -121,7 +129,7 @@ export function NewRole() {
       queryClient.invalidateQueries({ queryKey: ["roles"] });
       queryClient.invalidateQueries({ queryKey: ["recruitly-jobs"] });
       // The role is saved even if drafting failed; the editor explains why.
-      navigate(`/brief/${role.id}`, { state: { draftNote } });
+      navigate(`/roles/${role.id}/brief`, { state: { draftNote } });
     },
   });
 
@@ -138,7 +146,7 @@ export function NewRole() {
       <div className="head-row">
         <header>
           <div className="eyebrow">New role</div>
-          <h1>Brief</h1>
+          <h1>Spec and brief</h1>
         </header>
         <Steps at={1} />
       </div>
@@ -186,7 +194,7 @@ export function NewRole() {
                 {job.data.company_name ? ` for ${job.data.company_name}` : ""}.
               </span>
             )}
-            {job.data?.role_id && <Link to={`/brief/${job.data.role_id}`}>This job already has a role. Open it.</Link>}
+            {job.data?.role_id && <Link to={`/roles/${job.data.role_id}`}>This job already has a role. Open it.</Link>}
             <button type="button" className="link-button" onClick={changeJob}>
               Change job
             </button>
@@ -343,15 +351,28 @@ function AddClient({
   );
 }
 
-export function Steps({ at }: { at: 1 | 2 | 3 | 4 }) {
-  const names = ["Spec", "Check the brief", "Search", "Candidates"];
+/** Where a role is: spec and brief, search, candidates. Links once the role exists. */
+export function Steps({ at, roleId }: { at: 1 | 2 | 3; roleId?: string }) {
+  const steps = [
+    { n: "Spec and brief", to: "brief" },
+    { n: "Search", to: "search" },
+    { n: "Candidates", to: "candidates" },
+  ];
   return (
-    <div className="steps">
-      {names.map((n, i) => (
-        <span key={n} className={i + 1 === at ? "on" : i + 1 < at ? "done" : undefined}>
-          {i + 1} · {n}
-        </span>
-      ))}
-    </div>
+    <nav className="steps" aria-label="Steps for this role">
+      {steps.map((s, i) => {
+        const cls = i + 1 === at ? "on" : i + 1 < at ? "done" : undefined;
+        const label = `${i + 1} · ${s.n}`;
+        return roleId && i + 1 !== at ? (
+          <Link key={s.n} className={cls} to={`/roles/${roleId}/${s.to}`}>
+            {label}
+          </Link>
+        ) : (
+          <span key={s.n} className={cls} aria-current={i + 1 === at ? "step" : undefined}>
+            {label}
+          </span>
+        );
+      })}
+    </nav>
   );
 }

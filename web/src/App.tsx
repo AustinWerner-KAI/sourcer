@@ -1,16 +1,14 @@
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api/client";
-import { Screen } from "./screens/Screen";
 import { SignIn } from "./screens/SignIn";
 import { Team } from "./screens/Team";
 import { Briefs, NewRole } from "./screens/Briefs";
 import { BriefEditor } from "./screens/BriefEditor";
 import { Search } from "./screens/Search";
 import { Candidates } from "./screens/Candidates";
-import { CandidateRoles } from "./screens/CandidateRoles";
-import { Settings } from "./screens/Outreach";
-import { useParams } from "react-router-dom";
+import { Settings } from "./screens/Settings";
+import { AdminLayout, Clients, Controls, DoNotContact } from "./screens/Admin";
 
 /** A fresh editor per role, so edits on one role never carry to another. */
 function BriefEditorPage() {
@@ -30,20 +28,20 @@ function SearchPage() {
   return <Search key={id} />;
 }
 
-const screens = [
-  { path: "/today", label: "Today", note: "Replies waiting, follow-ups due and new matches for live roles." },
-  {
-    path: "/outreach",
-    label: "Outreach",
-    note: "Drafts for email, LinkedIn and WhatsApp. Approve each message before it goes.",
-  },
-  {
-    path: "/client-map",
-    label: "Client map",
-    note: "Where a client's hires come from: feeders, universities, titles.",
-  },
-  { path: "/playbook", label: "Playbook", note: "Rules learned from your feedback, waiting for approval or active." },
-];
+/** A role's own address opens the step it is at: candidates once the brief is confirmed. */
+function RoleHome() {
+  const { id } = useParams();
+  const role = useQuery({ queryKey: ["role", id], queryFn: () => api.role(id!) });
+  if (role.isLoading) return <main aria-busy="true" />;
+  if (!role.data) return <Navigate to="/roles" replace />;
+  return <Navigate to={`/roles/${id}/${role.data.brief?.confirmed ? "candidates" : "brief"}`} replace />;
+}
+
+/** Old /brief/:id links keep working. */
+function Moved({ step }: { step: "brief" | "search" | "candidates" }) {
+  const { id } = useParams();
+  return <Navigate to={`/roles/${id}/${step}`} replace />;
+}
 
 /** Green when connected, red when not, grey when unknown. The words beside it say which. */
 function Light({ on }: { on: boolean | null }) {
@@ -62,8 +60,6 @@ export function App() {
     staleTime: 60_000,
   });
   const queryClient = useQueryClient();
-  // A role's candidates live under /brief/:id but belong to Candidates in the menu.
-  const onCandidates = /^\/brief\/[^/]+\/candidates/.test(useLocation().pathname);
 
   if (me.isLoading) return <div className="loading" aria-busy="true" />;
   if (!me.data) return <SignIn />;
@@ -87,20 +83,11 @@ export function App() {
           <div className="brand-sub">Sourcer</div>
         </div>
         <div className="nav-links">
-          <NavLink to="/today">Today</NavLink>
-          <NavLink to="/brief" className={({ isActive }) => (isActive && !onCandidates ? "active" : undefined)}>
-            Brief
-          </NavLink>
-          <NavLink to="/candidates" className={({ isActive }) => (isActive || onCandidates ? "active" : undefined)}>
-            Candidates
-          </NavLink>
-          {screens.slice(1).map((s) => (
-            <NavLink key={s.path} to={s.path}>
-              {s.label}
-            </NavLink>
-          ))}
-          {isAdmin && <NavLink to="/team">Team</NavLink>}
+          <NavLink to="/roles">Roles</NavLink>
+        </div>
+        <div className="nav-links util">
           <NavLink to="/settings">Settings</NavLink>
+          {isAdmin && <NavLink to="/admin">Admin</NavLink>}
         </div>
         <div className="user">
           <div className="user-name">{me.data.name}</div>
@@ -141,18 +128,31 @@ export function App() {
         </div>
       </nav>
       <Routes>
-        <Route path="/" element={<Navigate to="/today" replace />} />
-        {screens.map((s) => (
-          <Route key={s.path} path={s.path} element={<Screen title={s.label} note={s.note} />} />
-        ))}
-        <Route path="/brief" element={<Briefs />} />
-        <Route path="/brief/new" element={<NewRole />} />
-        <Route path="/brief/:id" element={<BriefEditorPage />} />
-        <Route path="/brief/:id/search" element={<SearchPage />} />
-        <Route path="/brief/:id/candidates" element={<CandidatesPage />} />
-        <Route path="/candidates" element={<CandidateRoles />} />
+        <Route path="/" element={<Navigate to="/roles" replace />} />
+        <Route path="/roles" element={<Briefs />} />
+        <Route path="/roles/new" element={<NewRole />} />
+        <Route path="/roles/:id" element={<RoleHome />} />
+        <Route path="/roles/:id/brief" element={<BriefEditorPage />} />
+        <Route path="/roles/:id/search" element={<SearchPage />} />
+        <Route path="/roles/:id/candidates" element={<CandidatesPage />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/team" element={isAdmin ? <Team me={me.data} /> : <Navigate to="/today" replace />} />
+        {isAdmin && (
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<Navigate to="/admin/team" replace />} />
+            <Route path="team" element={<Team me={me.data} />} />
+            <Route path="clients" element={<Clients />} />
+            <Route path="do-not-contact" element={<DoNotContact />} />
+            <Route path="controls" element={<Controls />} />
+          </Route>
+        )}
+        {/* Old addresses. */}
+        <Route path="/brief" element={<Navigate to="/roles" replace />} />
+        <Route path="/brief/new" element={<Navigate to="/roles/new" replace />} />
+        <Route path="/brief/:id" element={<Moved step="brief" />} />
+        <Route path="/brief/:id/search" element={<Moved step="search" />} />
+        <Route path="/brief/:id/candidates" element={<Moved step="candidates" />} />
+        <Route path="/team" element={<Navigate to="/admin/team" replace />} />
+        <Route path="*" element={<Navigate to="/roles" replace />} />
       </Routes>
     </div>
   );
