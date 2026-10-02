@@ -312,6 +312,7 @@ struct Row {
     recruitly_check_failed: bool,
     sent_at: Option<chrono::DateTime<chrono::Utc>>,
     in_pipeline: bool,
+    email_status: Option<String>,
 }
 
 /// Everything the list shows, including the live known check. `{filter}` and
@@ -338,6 +339,8 @@ SELECT c.id, c.version, c.state, p.full_name, p.current_title, p.current_employe
             OR d.identifier IN (SELECT regexp_replace(k.value, '[^0-9+]', '', 'g')
                                 FROM contact k WHERE k.person_id = p.id AND k.kind = 'phone')))
        ) AS dnc,
+       (SELECT coalesce(o.reply_kind, o.status::text) FROM outreach o
+        WHERE o.candidacy_id = c.id) AS email_status,
        o.state::text AS other_state, o.title AS other_title, t.last_out,
        p.recruitly_note, p.recruitly_owner_id, p.recruitly_checked_at,
        p.recruitly_check_failed, h.done_at AS sent_at,
@@ -447,6 +450,7 @@ impl From<Row> for CandidateRow {
             recruitly_checked_at: r.recruitly_checked_at.map(|t| t.timestamp()),
             sent_to_recruitly: r.sent_at.map(|t| t.format("%-d %b %Y").to_string()),
             in_recruitly_pipeline: r.in_pipeline,
+            email_status: r.email_status,
         }
     }
 }
