@@ -692,6 +692,20 @@ impl Sender {
         .bind(d.step_id)
         .execute(&mut *tx)
         .await?;
+        // It may have gone, so it shows in their history like any email out.
+        sqlx::query(
+            "INSERT INTO touch (org_id, person_id, role_id, user_id, channel, direction,
+                                message_id, sequence_step, at)
+             SELECT c.org_id, c.person_id, c.role_id, $2, 'email', 'out', s.message_id, s.step,
+                    s.unconfirmed_at
+             FROM candidacy c, outreach_step s WHERE c.id = $1 AND s.id = $3
+               AND s.unconfirmed_at IS NOT NULL",
+        )
+        .bind(d.candidacy_id)
+        .bind(d.sender_id)
+        .bind(d.step_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(
             "UPDATE outreach SET status = 'stopped', stop_reason = $2,
                     version = version + 1, updated_at = now()
