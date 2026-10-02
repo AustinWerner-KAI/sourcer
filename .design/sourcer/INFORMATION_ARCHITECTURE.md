@@ -166,3 +166,13 @@ Mockup only, nothing built. Measured with Playwright at 1440 and 390.
 **Open question.** Kai said "3 maximun" and "Claude chooses 2 and leave one as an option". Read here as the brief plus up to 3 more. Not yet confirmed.
 
 **Fixed in revised mockup (2 Oct 2026).** Each card holds its own choice: Wider titles picks None/25/All 35, Wider places has its own "Count · 3 credits" button (no tick, no second bar button), Your own has "Set up". The bar has one primary, "Pull 25 people · 25 credits", and says where they come from ("25 from Wider titles"). Each Claude chip has a remove ×. Overlap shown ("35 new · 38 found, 3 already on your list"). "Your own" label now matches the others (class renamed `.lbl`, the clash was the global `.you`). Phone: every control on the screen 44px or more, Pull button full width, candidate rows wrap under the name. Smallest text 12.5px. Left over, app-wide not this screen: nav links 32px and Sign out 15px tall on phones.
+
+## Built: More searches (2 Oct 2026, PR after #32)
+
+- Search screen: the Round 2 panel is gone. A "More searches" panel shows once the brief has a current count: Claude's two picks (asked automatically once per brief version, free of search credits) and "Your own".
+- Each card: what it adds as chips (× removes one; the last cannot be removed), its own Count button (one credit per place that differs from the brief), then "N new, not already on your list" and None / 25 / All N. One Pull button for all cards, naming where people come from; over 50 asks once more.
+- Your own: add titles, levels, places, employers, make required tools optional, fewer years. Widen only: it can never narrow the brief.
+- Candidates: "Found by: <search>" on anyone a wider search found.
+- Brief editor: 15 more employer types (Banks to Healthcare), each mapped to People Data Labs industries.
+- Review fixes before shipping: adding employer types to a brief with none would have narrowed it (now ignored); a press on several searches now shows as one result; picks clear after a pull; a count still running keeps its key, so a retry never pays twice; chips cannot be changed mid-count; Claude is not asked while searching is blocked.
+- Measured at 390: every control in the panel 44px or taller; no sideways scroll.
