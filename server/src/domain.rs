@@ -37,8 +37,6 @@ impl CandidacyState {
                 | (Shortlisted, Rejected)
                 | (Shortlisted, Drafted)
                 | (Drafted, Approved)
-                | (Drafted, Shortlisted) // outreach stopped before it was approved
-                | (Approved, Shortlisted) // outreach stopped before anything was sent
                 | (Drafted, Rejected)
                 | (Approved, Rejected)
                 | (Approved, Contacted)
@@ -726,6 +724,10 @@ mod tests {
         assert!(!Drafted.can_move_to(Contacted));
         assert!(!Shortlisted.can_move_to(Contacted));
         assert!(!Ranked.can_move_to(Drafted));
+        // Only stopping the emails moves someone back to the shortlist, so a
+        // decision can never leave emails approved for a shortlisted person.
+        assert!(!Drafted.can_move_to(Shortlisted));
+        assert!(!Approved.can_move_to(Shortlisted));
     }
 
     #[test]
