@@ -513,6 +513,9 @@ pub struct CandidateRow {
     pub sent_to_recruitly: Option<String>,
     /// Sent into the linked job's pipeline, not only as a candidate.
     pub in_recruitly_pipeline: bool,
+    /// Where their emails are: "draft", "approved", "active", "stopped" or
+    /// "done", or "reply", "auto" or "bounce" once one arrived. None if never drafted.
+    pub email_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
