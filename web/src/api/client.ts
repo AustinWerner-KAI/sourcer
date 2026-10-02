@@ -33,6 +33,8 @@ import type { ClientUpdate } from "./types/ClientUpdate";
 import type { DncEntry } from "./types/DncEntry";
 import type { DncList } from "./types/DncList";
 import type { NewDnc } from "./types/NewDnc";
+import type { MailStatus } from "./types/MailStatus";
+import type { TodayView } from "./types/TodayView";
 
 /** Sent with every change; the server refuses changes without it. */
 const CHANGE_HEADER = "X-Sourcer";
@@ -63,6 +65,18 @@ async function failure(res: Response): Promise<Error> {
   const text = [400, 403, 404, 409, 422, 429, 502, 503].includes(res.status) ? await res.text() : "";
   if (!text && res.status === 403) return new Error("Only an active admin can do this.");
   return new Error(text || `Something went wrong (${res.status}). Please try again.`);
+}
+
+/** A change with no answer body (204). */
+async function sendEmpty(method: string, path: string): Promise<void> {
+  const res = await fetch(path, {
+    method,
+    credentials: "include",
+    headers: { "Content-Type": "application/json", [CHANGE_HEADER]: "1" },
+    body: "{}",
+  });
+  if (res.status === 401) throw new SignedOut();
+  if (!res.ok) throw await failure(res);
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -163,7 +177,7 @@ export const api = {
     ),
   saveOutreach: (candidacy: string, version: number, steps: OutreachStepEdit[]) =>
     send<OutreachView>("PUT", `/api/candidates/${candidacy}/outreach`, { version, steps }),
-  /** One approval for all three emails. Nothing is sent until Outlook is connected. */
+  /** One approval for all three emails. They go out from the sender's Outlook in working hours. */
   approveOutreach: (candidacy: string, version: number) =>
     send<OutreachView>("POST", `/api/candidates/${candidacy}/outreach/approve`, { version }),
   stopOutreach: (candidacy: string, version: number) =>
@@ -177,6 +191,23 @@ export const api = {
     get<DncList>(`/api/admin/do-not-contact?q=${encodeURIComponent(q)}&page=${page}`),
   /** Permanent: there is no way to remove an entry. */
   addDnc: (n: NewDnc) => send<DncEntry>("POST", "/api/admin/do-not-contact", n),
+
+  /** Your Outlook connection. Connecting is a full-page visit to /api/mail/connect. */
+  mailStatus: () => get<MailStatus>("/api/mail"),
+  disconnectMail: async (): Promise<void> => {
+    const res = await fetch("/api/mail", {
+      method: "DELETE",
+      credentials: "include",
+      headers: { [CHANGE_HEADER]: "1" },
+    });
+    if (res.status === 401) throw new SignedOut();
+    if (!res.ok) throw await failure(res);
+  },
+
+  today: () => get<TodayView>("/api/today"),
+  replyHandled: (candidacy: string) => sendEmpty("POST", `/api/candidates/${candidacy}/reply-handled`),
+  /** They said no: never contacted again, for any role. */
+  optOut: (candidacy: string) => sendEmpty("POST", `/api/candidates/${candidacy}/opt-out`),
 
   logout: async (): Promise<void> => {
     const res = await fetch("/api/auth/logout", {
