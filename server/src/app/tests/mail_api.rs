@@ -996,6 +996,15 @@ async fn unclear_or_refused_sends_never_go_twice_and_never_block() {
     assert_eq!((status.as_str(), state.as_str()), ("stopped", "contacted"));
     assert!(reason.unwrap().contains("Could not confirm"));
     assert_eq!(fake.lock().unwrap().sent.len(), 1, "only the one that went");
+    let outs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM touch t JOIN candidacy c ON c.person_id = t.person_id
+         WHERE c.id = $1 AND t.direction = 'out'",
+    )
+    .bind(c3)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(outs, 1, "shown in their history as possibly sent");
     let res = send(
         &app,
         json_req(
