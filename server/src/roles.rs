@@ -23,8 +23,8 @@ use crate::{
     audit,
     auth::CurrentUser,
     domain::{
-        Brief, BriefDomain, BriefLines, BriefTool, Client, ConfirmBrief, LockedOut, NewClient,
-        NewRole, RecruitlyLink, RoleDetail, RoleSummary, RoleUpdate,
+        Brief, BriefDomain, BriefLines, BriefTool, Client, CloseRole, ConfirmBrief, LockedOut,
+        NewClient, NewRole, RecruitlyLink, RoleDetail, RoleSummary, RoleUpdate,
     },
     employer,
 };
@@ -271,31 +271,99 @@ pub async fn list_roles(State(state): State<AppState>, user: CurrentUser) -> Res
     let Some(pool) = state.pool.as_ref() else {
         return unavailable();
     };
-    type SummaryRow = (Uuid, String, Option<String>, String);
-    let rows: Result<Vec<SummaryRow>, _> = sqlx::query_as(
+    match summaries(pool, user.org_id).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+/// Every role of the organisation, newest first.
+async fn summaries(pool: &PgPool, org_id: Uuid) -> anyhow::Result<Vec<RoleSummary>> {
+    type SummaryRow = (Uuid, String, Option<String>, String, bool, i64);
+    let rows: Vec<SummaryRow> = sqlx::query_as(
         "SELECT r.id, r.title, c.name,
                 CASE WHEN EXISTS (SELECT 1 FROM brief b WHERE b.role_id = r.id AND b.confirmed_at IS NULL) THEN 'draft'
                      WHEN EXISTS (SELECT 1 FROM brief b WHERE b.role_id = r.id) THEN 'confirmed'
-                     ELSE 'none' END
+                     ELSE 'none' END,
+                r.closed_at IS NOT NULL,
+                (SELECT count(*) FROM outreach o JOIN candidacy k ON k.id = o.candidacy_id
+                 WHERE k.role_id = r.id AND o.org_id = r.org_id AND o.status IN ('approved', 'active'))
          FROM role r LEFT JOIN client c ON c.id = r.client_id
          WHERE r.org_id = $1
          ORDER BY r.created_at DESC",
     )
-    .bind(user.org_id)
+    .bind(org_id)
     .fetch_all(pool)
-    .await;
-    match rows {
-        Ok(rows) => Json(
-            rows.into_iter()
-                .map(|(id, title, client_name, brief_state)| RoleSummary {
-                    id,
-                    title,
-                    client_name,
-                    brief_state,
-                })
-                .collect::<Vec<_>>(),
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, title, client_name, brief_state, closed, active_sequences)| RoleSummary {
+                id,
+                title,
+                client_name,
+                brief_state,
+                closed,
+                active_sequences,
+            },
         )
-        .into_response(),
+        .collect())
+}
+
+/// POST /api/roles/:id/close: close a role, or reopen it. A closed role is
+/// not searched and sends no more emails; its sequences stop at the next
+/// check before sending. Returns every role.
+pub async fn close_role(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CloseRole>,
+) -> Response {
+    let Some(pool) = state.pool.as_ref() else {
+        return unavailable();
+    };
+    let result = async {
+        let mut tx = pool.begin().await?;
+        let changed = sqlx::query(
+            "UPDATE role SET closed_at = CASE WHEN $3 THEN now() END,
+                             closed_by = CASE WHEN $3 THEN $4 END
+             WHERE id = $1 AND org_id = $2 AND (closed_at IS NOT NULL) <> $3",
+        )
+        .bind(id)
+        .bind(user.org_id)
+        .bind(req.closed)
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if changed > 0 {
+            audit::record(
+                &mut *tx,
+                user.org_id,
+                Some(user.id),
+                if req.closed {
+                    audit::action::ROLE_CLOSED
+                } else {
+                    audit::action::ROLE_REOPENED
+                },
+                &format!("role:{id}"),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = result {
+        return server_error(e);
+    }
+    match crate::searching::role_exists(pool, user.org_id, id).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return server_error(e),
+    }
+    match summaries(pool, user.org_id).await {
+        Ok(rows) => Json(rows).into_response(),
         Err(e) => server_error(e),
     }
 }
@@ -435,16 +503,18 @@ pub(crate) async fn role_detail(
         Option<Uuid>,
         Option<String>,
         Option<String>,
+        bool,
     );
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, title, spec_text, client_id, recruitly_job_id, recruitly_job_label
+        "SELECT id, title, spec_text, client_id, recruitly_job_id, recruitly_job_label,
+                closed_at IS NOT NULL
          FROM role WHERE id = $1 AND org_id = $2",
     )
     .bind(id)
     .bind(org_id)
     .fetch_optional(pool)
     .await?;
-    let Some((id, title, spec_text, client_id, job_id, job_label)) = row else {
+    let Some((id, title, spec_text, client_id, job_id, job_label, closed)) = row else {
         return Ok(None);
     };
     let hiring: Option<ClientRow> = match client_id {
@@ -483,6 +553,7 @@ pub(crate) async fn role_detail(
             label: job_label.unwrap_or_else(|| id.clone()),
             id,
         }),
+        closed,
     }))
 }
 
