@@ -184,6 +184,7 @@ pub fn router_with_web(state: AppState, web_dir: Option<&str>) -> Router {
         )
         .route("/api/mail", get(mail::status).delete(mail::disconnect))
         .route("/api/mail/connect", get(mail::connect))
+        .route("/api/mail/test", post(mail::test_send))
         .route(mail::CALLBACK_PATH, get(mail::callback))
         .route("/api/today", get(today::today))
         .route("/api/candidates/:id/reply-handled", post(today::handled))

@@ -141,6 +141,8 @@ export const api = {
   /** `key` is fresh per press, so a repeated request never pays twice. */
   countMatches: (id: string, key: string) => send<SearchState>("POST", `/api/roles/${id}/search/count`, { key }),
   pull: (id: string, req: PullRequest) => send<SearchState>("POST", `/api/roles/${id}/search/pull`, req),
+  /** One sample first email from your Outlook to your own address. */
+  testMail: () => send<{ sent_to: string }>("POST", "/api/mail/test", {}),
   /** Claude reads the spec and a count that found too many, and proposes changes. Saves and searches nothing. */
   tighten: (id: string) => send<TightenView>("POST", `/api/roles/${id}/search/tighten`, {}),
   /** Confirm the kept changes as the next brief version. Count it next. */
