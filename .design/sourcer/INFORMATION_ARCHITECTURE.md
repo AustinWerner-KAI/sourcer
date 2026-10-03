@@ -192,3 +192,9 @@ Mockup only, nothing built. Measured with Playwright at 1440 and 390.
 - Reopening allows searching and new approvals again; sequences already stopped stay stopped.
 - Phones: role rows become cards (title, client and brief, then actions); every control 44px or taller; no sideways scroll. This also fixes the Roles table running off the side on phones.
 - Known edge: a pull already queued when the role is closed still runs.
+
+## Built: Send a test to myself (3 Oct 2026)
+
+- Settings, Your Outlook: once connected and working, a line explains the test and a "Send a test to myself" button sends one sample first email from your Outlook to your own address, with your signature and the data-source footer. Then: "Sent to <address>. Check your inbox."
+- Refused with a plain reason when Outlook is not connected, needs connecting again, or there is no signature; at most one a minute. No candidate is involved and nothing counts towards the daily limit.
+- Measured: button 44px on phones, no sideways scroll.

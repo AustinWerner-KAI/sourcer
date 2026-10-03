@@ -523,3 +523,9 @@ ul.today .form-error { margin: 8px 0 0; }
   .roles .row-acts, .roles .ask-close { justify-content: flex-start; }
 }
 
+/* Settings: send a test email to yourself. */
+.mailtest { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.mailtest .hint { margin: 0; }
+.mailtest .ok-line { margin: 0; font-size: 13.5px; color: var(--ok); }
+@media (max-width: 768px) { .mailtest .btn-ghost { min-height: 44px; width: 100%; } }
+
