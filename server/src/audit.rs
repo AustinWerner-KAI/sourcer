@@ -52,6 +52,7 @@ pub mod action {
     pub const DNC_ADDED: &str = "dnc.add";
     pub const MAIL_CONNECTED: &str = "mail.connect";
     pub const MAIL_DISCONNECTED: &str = "mail.disconnect";
+    pub const MAIL_TESTED: &str = "mail.test";
     pub const OUTREACH_SENT: &str = "outreach.send";
     pub const OUTREACH_REPLY: &str = "outreach.reply";
     pub const REPLY_HANDLED: &str = "outreach.reply_handled";

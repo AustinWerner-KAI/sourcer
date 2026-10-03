@@ -823,6 +823,133 @@ async fn finish_connect(
     }
 }
 
+/// The subject of the test email.
+pub const TEST_SUBJECT: &str = "Sourcer test: how your first email looks";
+/// At most one test email a minute per person.
+const TEST_GAP_SECS: i64 = 60;
+
+/// The test email's text: the shape of a first email, with no candidate in it.
+fn test_body(first_name: &str) -> String {
+    let name = if first_name.is_empty() {
+        "there"
+    } else {
+        first_name
+    };
+    format!(
+        "Hey {name},\n\nHope you're well. This is a test from Sourcer, so you can see a first email \
+         exactly as a candidate would. A real one gives the role's basics:\n\n\
+         - The title, level and location\n\
+         - What the work is\n\n\
+         lmk if you're interested, and if you're open to a move right now."
+    )
+}
+
+/// POST /api/mail/test: send one sample first email from this person's
+/// Outlook to their own address, with their signature and the footer, so
+/// they see exactly what a candidate would. No candidate is involved.
+pub async fn test_send(State(state): State<AppState>, user: CurrentUser) -> Response {
+    let Some(pool) = state.pool.as_ref() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let refuse = |code: StatusCode, msg: &str| (code, msg.to_string()).into_response();
+    type Row = (Option<String>, Option<String>, String, String, bool);
+    let row: Result<Row, _> = sqlx::query_as(
+        "SELECT m.address, m.broken, u.signature, u.name,
+                EXISTS (SELECT 1 FROM audit a WHERE a.actor_id = u.id AND a.action = $2
+                          AND a.at > now() - make_interval(secs => $3))
+         FROM app_user u LEFT JOIN mailbox m ON m.user_id = u.id
+         WHERE u.id = $1",
+    )
+    .bind(user.id)
+    .bind(audit::action::MAIL_TESTED)
+    .bind(TEST_GAP_SECS as f64)
+    .fetch_one(pool)
+    .await;
+    let (address, broken, signature, name) = match row {
+        Ok((_, _, _, _, true)) => {
+            return refuse(
+                StatusCode::TOO_MANY_REQUESTS,
+                "A test went less than a minute ago. Check your inbox, then try again.",
+            )
+        }
+        Ok((a, b, s, n, false)) => (a, b, s, n),
+        Err(e) => {
+            tracing::error!(error = %e, "mail test failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let Some(address) = address else {
+        return refuse(StatusCode::CONFLICT, "Connect Outlook first.");
+    };
+    if broken.is_some() {
+        return refuse(
+            StatusCode::CONFLICT,
+            "Outlook needs connecting again. Use Connect Outlook above.",
+        );
+    }
+    if signature.trim().is_empty() {
+        return refuse(
+            StatusCode::CONFLICT,
+            "Add your email signature below first. Every email ends with it.",
+        );
+    }
+    let token = match state.mail.access_token(pool, user.id).await {
+        Ok(t) => t,
+        Err(MailError::NotConnected) => {
+            return refuse(StatusCode::CONFLICT, "Connect Outlook first.")
+        }
+        Err(MailError::Reconnect) => {
+            return refuse(
+                StatusCode::CONFLICT,
+                "Outlook needs connecting again. Use Connect Outlook above.",
+            )
+        }
+        Err(MailError::Other(e)) => {
+            tracing::warn!(error = %e, "mail test: no token");
+            return refuse(
+                StatusCode::BAD_GATEWAY,
+                "Outlook could not be reached. Try again in a minute.",
+            );
+        }
+    };
+    let first = name.split_whitespace().next().unwrap_or_default();
+    let html = crate::outreach::render_html(&test_body(first), &signature, true);
+    let sent = async {
+        let draft = state
+            .mail
+            .create(user.id, &token, &address, TEST_SUBJECT, &html)
+            .await?;
+        if let Err(e) = state.mail.send(user.id, &token, &draft.id).await {
+            let _ = state.mail.delete(user.id, &token, &draft.id).await;
+            return Err(e);
+        }
+        Ok::<(), MailError>(())
+    }
+    .await;
+    if let Err(e) = sent {
+        let msg = match e {
+            MailError::Reconnect => "Outlook needs connecting again. Use Connect Outlook above.",
+            _ => "Outlook did not take the test email. Try again in a minute.",
+        };
+        if let MailError::Other(e) = &e {
+            tracing::warn!(error = %e, "mail test: send failed");
+        }
+        return refuse(StatusCode::BAD_GATEWAY, msg);
+    }
+    if let Err(e) = audit::record(
+        pool,
+        user.org_id,
+        Some(user.id),
+        audit::action::MAIL_TESTED,
+        &format!("user:{}", user.id),
+    )
+    .await
+    {
+        tracing::error!(error = %e, "mail test: audit failed");
+    }
+    Json(json!({"sent_to": address})).into_response()
+}
+
 /// DELETE /api/mail: stop sending from this person's Outlook. Approved emails
 /// wait until it is connected again.
 pub async fn disconnect(State(state): State<AppState>, user: CurrentUser) -> Response {
