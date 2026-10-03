@@ -1121,3 +1121,73 @@ async fn reject_during_a_send_waits_for_it() {
     assert_eq!(fake.lock().unwrap().sent.len(), 1);
     assert_eq!(state_of(&pool, outreach).await.2, "contacted");
 }
+
+#[tokio::test]
+async fn a_test_email_goes_only_to_your_own_address() {
+    let Some(pool) = testutil::fresh_pool().await else {
+        return;
+    };
+    let org = testutil::org(&pool).await;
+    let (base, fake) = fake_outlook("placeholder").await;
+    let (app, mail) = mail_app(pool.clone(), &base);
+    let test = |cookie: &str| json_req("POST", "/api/mail/test", cookie, json!({}));
+
+    // Not connected yet.
+    let (_, stranger) = signed_in(&pool, org, "resourcer").await;
+    let res = send(&app, test(&stranger)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert!(body_text(res).await.contains("Connect Outlook"));
+
+    let (id, me, email) = connected(&pool, &mail, org).await;
+    fake.lock().unwrap().me = email.clone();
+    // No signature: nothing goes.
+    sqlx::query("UPDATE app_user SET signature = '' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = send(&app, test(&me)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert!(body_text(res).await.contains("signature"));
+    sqlx::query("UPDATE app_user SET signature = 'Regards\nKai' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = send(&app, test(&me)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_body(res).await["sent_to"], json!(email));
+    {
+        let f = fake.lock().unwrap();
+        assert_eq!(f.sent.len(), 1);
+        let m = &f.msgs[&f.sent[0]];
+        assert_eq!(m.to, std::slice::from_ref(&email));
+        assert_eq!(m.subject, crate::mail::TEST_SUBJECT);
+        assert!(m.html.contains("Regards<br>Kai"), "{}", m.html);
+        assert!(
+            m.html.contains("professional data provider"),
+            "the footer is shown"
+        );
+    }
+    // Once a minute at most.
+    let res = send(&app, test(&me)).await;
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(fake.lock().unwrap().sent.len(), 1);
+
+    // A refused send leaves no draft behind.
+    sqlx::query("UPDATE audit SET at = at - interval '2 minutes' WHERE actor_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    fake.lock().unwrap().send_mode = SendMode::Fail;
+    let res = send(&app, test(&me)).await;
+    assert_eq!(res.status(), StatusCode::BAD_GATEWAY);
+    let f = fake.lock().unwrap();
+    assert_eq!(f.sent.len(), 1);
+    assert!(
+        f.msgs.values().all(|m| !m.draft),
+        "the failed draft was deleted"
+    );
+}

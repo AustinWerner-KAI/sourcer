@@ -120,6 +120,7 @@ function Outlook({ isAdmin }: { isAdmin: boolean }) {
     mutationFn: api.disconnectMail,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["mail"] }),
   });
+  const test = useMutation({ mutationFn: api.testMail });
   const m = q.data;
   const redirect = m?.redirect_uri || `${window.location.origin}/api/mail/callback`;
 
@@ -201,6 +202,26 @@ function Outlook({ isAdmin }: { isAdmin: boolean }) {
               Disconnect
             </button>
           </span>
+        </div>
+      )}
+      {m && m.configured && m.connected && !m.broken && (
+        <div className="mailtest">
+          <p className="hint">
+            See exactly what a candidate gets: one sample first email, with your signature and the footer, sent to you.
+          </p>
+          <button type="button" className="btn-ghost" onClick={() => test.mutate()} disabled={test.isPending}>
+            {test.isPending ? "Sending" : "Send a test to myself"}
+          </button>
+          {test.data && (
+            <p className="ok-line" role="status">
+              Sent to {test.data.sent_to}. Check your inbox.
+            </p>
+          )}
+          {test.error && (
+            <p className="form-error" role="alert">
+              {test.error.message}
+            </p>
+          )}
         </div>
       )}
       {disconnect.error && (
